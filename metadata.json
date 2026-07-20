@@ -1,0 +1,8 @@
+{
+  "name": "Almoxarife Elétrica Seinfra",
+  "description": "Sistema de gestão de demandas, materiais e relatórios semanais para a equipe de elétrica da Seinfra.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

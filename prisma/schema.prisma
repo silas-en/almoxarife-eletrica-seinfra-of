@@ -1,0 +1,237 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ELECTRICIAN
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id        String     @id @default(uuid())
+  username  String     @unique
+  password  String
+  name      String
+  role      UserRole   @default(ELECTRICIAN)
+  status    UserStatus @default(PENDING)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  assignedDemands Demand[] @relation("AssignedElectricians")
+  createdDemands  Demand[] @relation("CreatedByAdmin")
+  reports         Report[]
+  auditLogs       AuditLog[]
+  equipmentDeliveries EquipmentDelivery[]
+
+  @@map("users")
+}
+
+model Material {
+  id          String   @id @default(uuid())
+  name        String
+  imageUrl    String?
+  unit        String   @default("un")
+  isExclusive Boolean  @default(false)
+  components  Json?    // Optional JSON array: [{ materialId: String, quantity: Int }]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  plannedIn   DemandMaterial[]
+  usedIn      UsedMaterial[]
+  returnedAs  ReturnedMaterial[]
+
+  @@map("materials")
+}
+
+enum DemandStatus {
+  PENDING
+  PENDING_APPROVAL
+  CONCLUDED
+}
+
+model Demand {
+  id                   String         @id @default(uuid())
+  date                 DateTime
+  description          String
+  location             String
+  googleMapsUrl        String?
+  clientNumber         String?
+  status               DemandStatus   @default(PENDING)
+  materialsDelivered   Boolean        @default(false)
+  excludeFromSeparation Boolean       @default(false)
+  
+  electricians         User[]         @relation("AssignedElectricians")
+  
+  createdById          String
+  createdBy            User           @relation("CreatedByAdmin", fields: [createdById], references: [id])
+
+  photoUrl             String?
+  transformerNumber    String?
+  observation          String?
+  vehicles             String[]       // Array of strings for simplicity as per requirement
+  tools                String[]       // Array of strings for tools used
+  
+  isPriority           Boolean        @default(false)
+  priorityExecutionDate DateTime?
+  repetition           Int            @default(1)
+  
+  plannedMaterials     DemandMaterial[]
+  usedMaterials        UsedMaterial[]
+  returnedMaterials    ReturnedMaterial[]
+  
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@map("demands")
+}
+
+model DemandMaterial {
+  id               String    @id @default(uuid())
+  demandId         String
+  demand           Demand    @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId       String
+  material         Material  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  quantity         Int
+  borrowed         Boolean   @default(false)
+  borrowedDeadline DateTime?
+
+  @@map("demand_materials")
+}
+
+model UsedMaterial {
+  id         String   @id @default(uuid())
+  demandId   String
+  demand     Demand   @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  quantity   Int
+
+  @@map("used_materials")
+}
+
+enum ReturnType {
+  NOT_USED
+  DEFECTIVE
+  RECOVERED
+}
+
+model ReturnedMaterial {
+  id           String     @id @default(uuid())
+  demandId     String?
+  demand       Demand?    @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId   String?
+  material     Material?  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  materialName String?
+  quantity     Int
+  type       ReturnType
+  date       DateTime   @default(now())
+  isReturned Boolean    @default(false)
+
+  @@map("returned_materials")
+}
+
+enum ReportType {
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model Report {
+  id             String     @id @default(uuid())
+  type           ReportType
+  startDate      DateTime
+  endDate        DateTime
+  referenceDate  DateTime   @default(now())
+  pdfUrl         String?
+  docxUrl        String?
+  generatedById  String
+  generatedBy    User       @relation(fields: [generatedById], references: [id])
+  createdAt      DateTime   @default(now())
+
+  @@map("reports")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model Vehicle {
+  id        String   @id @default(uuid())
+  name      String
+  plate     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("vehicles")
+}
+
+model Tool {
+  id        String   @id @default(uuid())
+  name      String
+  code      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("tools")
+}
+
+model Equipment {
+  id         String              @id @default(uuid())
+  name       String
+  code       String?             // Serial or product code
+  type       String              @default("EPI") // "EPI", "FERRAMENTA", "EQUIPAMENTO"
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  deliveries EquipmentDelivery[]
+
+  @@map("equipments")
+}
+
+model EquipmentDelivery {
+  id            String    @id @default(uuid())
+  electricianId String
+  electrician   User      @relation(fields: [electricianId], references: [id], onDelete: Cascade)
+  equipmentId   String
+  equipment     Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  quantity      Int       @default(1)
+  deliveryDate  DateTime  @default(now())
+  type          String    @default("ENTREGA") // "ENTREGA" (entregue ao eletricista), "DEVOLUCAO" (devolvido pelo eletricista)
+  observation   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("equipment_deliveries")
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  name        String
+  fileUrl     String
+  uploadedAt  DateTime @default(now())
+
+  @@map("documents")
+}
+
