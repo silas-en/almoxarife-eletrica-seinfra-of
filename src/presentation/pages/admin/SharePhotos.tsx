@@ -46,6 +46,13 @@ export default function SharePhotos() {
     return isExecuted && hasPhotos && d.id && !d.id.startsWith('offline-') && matchesDate;
   });
 
+  // Sort by location name (nome) alphabetically
+  batchDemands.sort((a: any, b: any) => {
+    const nameA = a.location || '';
+    const nameB = b.location || '';
+    return nameA.localeCompare(nameB);
+  });
+
   const [sharingDemandId, setSharingDemandId] = useState<string | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0);

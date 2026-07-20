@@ -284,7 +284,7 @@ export default function Reports() {
                 <span className="text-sm font-bold text-gray-500 uppercase">Demandas</span>
               </div>
               <p className="text-3xl font-extrabold text-gray-900">
-                {viewingPeriod ? Object.values(report?.data || {}).flat().length : (periods?.reduce((sum: number, p: any) => sum + p.demandCount, 0) || 0)}
+                {viewingPeriod ? (report?.demandsCount ?? 0) : (periods?.reduce((sum: number, p: any) => sum + p.demandCount, 0) || 0)}
               </p>
               <p className="text-xs text-gray-400 mt-1">
                 {viewingPeriod ? `Concluídas no período ${getRangeTitle().toLowerCase()}` : `Total acumulado (${getRangeTitle().toLowerCase()})`}

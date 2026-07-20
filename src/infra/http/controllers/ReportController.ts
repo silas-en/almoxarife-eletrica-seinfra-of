@@ -536,9 +536,15 @@ export class ReportController {
 
               const lineY = doc.y;
               doc.text(material?.name || 'Material Desconhecido', 60, lineY);
-              doc.text(`${pm?.quantity || 0} ${material?.unit || ''}`, 380, lineY);
-              doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
-              doc.text(`${rm?.quantity || 0} ${material?.unit || ''}`, 480, lineY);
+              
+              const isExclusiveSplitClone = d.plannedMaterials && d.plannedMaterials.length === 0;
+              const plannedText = isExclusiveSplitClone ? '' : `${pm?.quantity || 0} ${material?.unit || ''}`;
+              const usedText = `${um?.quantity || 0} ${material?.unit || ''}`;
+              const surplusText = isExclusiveSplitClone ? '' : `${rm?.quantity || 0} ${material?.unit || ''}`;
+
+              doc.text(plannedText, 380, lineY);
+              doc.text(usedText, 430, lineY);
+              doc.text(surplusText, 480, lineY);
               
               doc.moveDown(0.2);
             });
@@ -836,10 +842,12 @@ export class ReportController {
           children: [new TextRun({ text: `EQUIPE: ${d.electricians.map((e: any) => e.name).join(', ')}`, size: 20 })]
         }));
         
-        children.push(new Paragraph({ children: [new TextRun({ text: "MATERIAIS PLANEJADOS:", bold: true, size: 20 })], spacing: { before: 100 } }));
-        d.plannedMaterials.forEach((m: any) => {
-          children.push(new Paragraph({ children: [new TextRun({ text: `• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, size: 18 })] }));
-        });
+        if (d.plannedMaterials && d.plannedMaterials.length > 0) {
+          children.push(new Paragraph({ children: [new TextRun({ text: "MATERIAIS PLANEJADOS:", bold: true, size: 20 })], spacing: { before: 100 } }));
+          d.plannedMaterials.forEach((m: any) => {
+            children.push(new Paragraph({ children: [new TextRun({ text: `• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, size: 18 })] }));
+          });
+        }
 
         children.push(new Paragraph({ children: [new TextRun({ text: "MATERIAIS UTILIZADOS:", bold: true, size: 20 })], spacing: { before: 100 } }));
         d.usedMaterials.forEach((m: any) => {

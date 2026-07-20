@@ -283,8 +283,40 @@ export async function handleExclusiveMaterialSplitting(demandId: string, tx: any
 }
 
 export async function processDemandPostApprovalOrConclusion(demandId: string, tx: any) {
-  // 1. Split by repetition first
-  const allIds = await handleDemandExecutionSplitting(demandId, tx);
+  // Fetch the demand to check for exclusive materials with quantity > 1
+  const demand = await tx.demand.findUnique({
+    where: { id: demandId },
+    include: {
+      usedMaterials: {
+        include: {
+          material: true
+        }
+      }
+    }
+  });
+
+  if (!demand) return;
+
+  const exclusiveUsed = demand.usedMaterials.filter((um: any) => um.material && um.material.isExclusive);
+  const maxExclusiveQuantity = exclusiveUsed.length > 0 
+    ? Math.max(...exclusiveUsed.map((um: any) => um.quantity)) 
+    : 0;
+
+  let allIds: string[] = [];
+
+  if (maxExclusiveQuantity > 1) {
+    // If the demand is going to be split by exclusive materials (maxExclusiveQuantity > 1),
+    // we bypass the repetition split completely to prevent the multiplier bug.
+    // Reset repetition to 1 in the database for data integrity.
+    await tx.demand.update({
+      where: { id: demandId },
+      data: { repetition: 1 }
+    });
+    allIds = [demandId];
+  } else {
+    // 1. Split by repetition first
+    allIds = await handleDemandExecutionSplitting(demandId, tx);
+  }
 
   // 2. For each resulting demand, check and split by exclusive materials
   for (const id of allIds) {

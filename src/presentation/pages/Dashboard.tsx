@@ -45,7 +45,24 @@ export default function Dashboard() {
 
   const filteredDemands = yearDemands?.filter((d: any) => {
     return d.status === activeTab;
-  });
+  }) || [];
+
+  if (activeTab === 'CONCLUDED') {
+    filteredDemands.sort((a: any, b: any) => {
+      const dateA = parseUTCDate(a.date).getTime();
+      const dateB = parseUTCDate(b.date).getTime();
+      if (dateB !== dateA) {
+        return dateB - dateA;
+      }
+      const nameA = a.location || '';
+      const nameB = b.location || '';
+      const comp = nameA.localeCompare(nameB);
+      if (comp !== 0) return comp;
+      const descA = a.description || '';
+      const descB = b.description || '';
+      return descA.localeCompare(descB);
+    });
+  }
 
   const isAdmin = user?.role === 'ADMIN';
 
