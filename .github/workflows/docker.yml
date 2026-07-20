@@ -42,4 +42,4 @@ jobs:
           context: .
           push: true
           no-cache: true
-          tags: ghcr.io/silaspaixao/almoxarife-eletrica-seinfra:latest
+          tags: ghcr.io/silas-en/almoxarife-eletrica-seinfra-of:latest
