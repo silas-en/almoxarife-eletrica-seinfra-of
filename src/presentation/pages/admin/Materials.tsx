@@ -4,7 +4,7 @@ import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 import api from '../../services/api.ts';
-import { Plus, Edit, Trash2, Camera, X, Loader2, Save, Package, GitMerge } from 'lucide-react';
+import { Plus, Edit, Trash2, Camera, X, Loader2, Save, Package, GitMerge, RefreshCw } from 'lucide-react';
 
 export default function Materials() {
   const queryClient = useQueryClient();
@@ -26,6 +26,27 @@ export default function Materials() {
   const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
   const [mergeSourceId, setMergeSourceId] = useState('');
   const [mergeTargetId, setMergeTargetId] = useState('');
+
+  const [isReprocessing, setIsReprocessing] = useState(false);
+  const [reprocessStatus, setReprocessStatus] = useState<string | null>(null);
+
+  const handleReprocessDemands = async () => {
+    setIsReprocessing(true);
+    setReprocessStatus(null);
+    try {
+      const res = await api.post('/demands/reprocess-exclusive');
+      const { healedCount, splitCount } = res.data;
+      setReprocessStatus(`Demandas atualizadas com sucesso! Clones corrigidos/unificados: ${healedCount}. Novos splits gerados: ${splitCount}.`);
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      setTimeout(() => setReprocessStatus(null), 10000);
+    } catch (err) {
+      console.error('Error reprocessing demands:', err);
+      setReprocessStatus('Erro ao atualizar demandas. Tente novamente.');
+      setTimeout(() => setReprocessStatus(null), 5000);
+    } finally {
+      setIsReprocessing(false);
+    }
+  };
 
   const { data: materials, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -171,6 +192,18 @@ export default function Materials() {
         </div>
         <div className="flex flex-wrap gap-3">
           <button
+            onClick={handleReprocessDemands}
+            disabled={isReprocessing}
+            className="bg-amber-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-amber-700 transition-colors shadow-sm font-semibold text-sm cursor-pointer disabled:opacity-50"
+          >
+            {isReprocessing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Atualizar Demandas
+          </button>
+          <button
             onClick={() => setIsMergeModalOpen(true)}
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700 transition-colors shadow-sm font-semibold text-sm cursor-pointer"
           >
@@ -184,6 +217,12 @@ export default function Materials() {
           </button>
         </div>
       </div>
+
+      {reprocessStatus && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm font-medium shadow-sm transition-all duration-300">
+          {reprocessStatus}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-center py-12">Carregando materiais...</div>

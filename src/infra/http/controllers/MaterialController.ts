@@ -92,10 +92,6 @@ export class MaterialController {
         isExclusiveBool = isExclusive === true || isExclusive === 'true';
       }
 
-      // Check if isExclusive changed from false to true to run retroactive split
-      const existingMaterial = await prisma.material.findUnique({ where: { id } });
-      const shouldRetroactiveSplit = isExclusiveBool === true && (!existingMaterial || !existingMaterial.isExclusive);
-
       const material = await prisma.material.update({
         where: { id },
         data: { 
@@ -106,14 +102,6 @@ export class MaterialController {
           components: parsedComponents !== undefined ? (parsedComponents || null) : undefined
         },
       });
-
-      if (shouldRetroactiveSplit) {
-        // Run retroactive split asynchronously using the regular prisma client
-        // to prevent interactive transaction timeouts or HTTP blocking.
-        retroactiveSplitForExclusiveMaterial(id, prisma).catch(err => {
-          console.error('[retroactiveSplitForExclusiveMaterial] Background error:', err);
-        });
-      }
 
       await AuditService.log('UPDATE', 'MATERIAL', req.user!.id, id, { name, unit });
 

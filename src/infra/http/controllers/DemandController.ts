@@ -344,6 +344,157 @@ export async function retroactiveSplitForExclusiveMaterial(materialId: string, t
 }
 
 export class DemandController {
+  static async reprocessExclusiveDemands(req: AuthRequest, res: Response) {
+    try {
+      // 1. Fetch all CONCLUDED demands with their details
+      const demands = await prisma.demand.findMany({
+        where: { status: 'CONCLUDED' },
+        include: {
+          electricians: { select: { id: true, name: true } },
+          plannedMaterials: true,
+          usedMaterials: {
+            include: {
+              material: true
+            }
+          },
+          returnedMaterials: true,
+        }
+      });
+
+      // Helper to clean description
+      const cleanDescription = (desc: string): string => {
+        const parts = desc.split('###REF_PHOTO:');
+        const base = parts[0] || '';
+        const ref = parts.length > 1 ? '###REF_PHOTO:' + parts.slice(1).join('###REF_PHOTO:') : '';
+        const cleanedBase = base.replace(/\s*-\s*[^-\n]+?demanda para o mesmo local/gi, '').trim();
+        return ref ? `${cleanedBase}${ref}` : cleanedBase;
+      };
+
+      // 2. Group demands by Date, Location and Cleaned Description
+      const groups: Record<string, any[]> = {};
+      for (const d of demands) {
+        const dateKey = new Date(d.date).toISOString().split('T')[0];
+        const locationKey = d.location.trim().toLowerCase();
+        const cleanedDescKey = cleanDescription(d.description).trim().toLowerCase();
+        
+        const key = `${dateKey}_${locationKey}_${cleanedDescKey}`;
+        if (!groups[key]) {
+          groups[key] = [];
+        }
+        groups[key].push(d);
+      }
+
+      let healedCount = 0;
+      let splitCount = 0;
+
+      // 3. Process each group inside its own transaction to prevent transaction timeout
+      for (const key of Object.keys(groups)) {
+        const group = groups[key];
+        
+        // Check if any demand in the group contains exclusive materials in usedMaterials
+        const hasExclusiveMaterial = group.some(d => 
+          d.usedMaterials.some((um: any) => um.material && um.material.isExclusive)
+        );
+
+        if (!hasExclusiveMaterial) {
+          // No exclusive materials used in this group, skip healing/re-splitting
+          continue;
+        }
+
+        // We have exclusive materials in this group, let's heal it inside a dedicated transaction!
+        await prisma.$transaction(async (tx) => {
+          // Find the main demand of this group:
+          // Preferably one that doesn't have "demanda para o mesmo local" in description
+          const mainDemand = group.find((d: any) => !d.description.toLowerCase().includes('demanda para o mesmo local')) || group[0];
+          const cloneDemands = group.filter((d: any) => d.id !== mainDemand.id);
+
+          // Consolidate used materials
+          const consolidatedUsed: Record<string, number> = {};
+          
+          // Add from mainDemand
+          for (const um of mainDemand.usedMaterials) {
+            consolidatedUsed[um.materialId] = (consolidatedUsed[um.materialId] || 0) + um.quantity;
+          }
+          
+          // Add from clones
+          for (const clone of cloneDemands) {
+            for (const um of clone.usedMaterials) {
+              consolidatedUsed[um.materialId] = (consolidatedUsed[um.materialId] || 0) + um.quantity;
+            }
+          }
+
+          // Update mainDemand's description to the cleaned description
+          const cleanedDesc = cleanDescription(mainDemand.description);
+          await tx.demand.update({
+            where: { id: mainDemand.id },
+            data: { description: cleanedDesc }
+          });
+
+          // Delete all clone demands
+          if (cloneDemands.length > 0) {
+            await tx.demand.deleteMany({
+              where: {
+                id: { in: cloneDemands.map((c: any) => c.id) }
+              }
+            });
+            healedCount += cloneDemands.length;
+          }
+
+          // Update mainDemand's usedMaterials quantities to consolidated sums
+          for (const matId of Object.keys(consolidatedUsed)) {
+            const qty = consolidatedUsed[matId];
+            const existingUM = mainDemand.usedMaterials.find((um: any) => um.materialId === matId);
+            
+            if (existingUM) {
+              await tx.usedMaterial.update({
+                where: { id: existingUM.id },
+                data: { quantity: qty }
+              });
+            } else {
+              await tx.usedMaterial.create({
+                data: {
+                  demandId: mainDemand.id,
+                  materialId: matId,
+                  quantity: qty
+                }
+              });
+            }
+          }
+
+          // Run the split algorithm on the healed mainDemand
+          // First, fetch its updated used materials (since we just updated them in tx)
+          const updatedMain = await tx.demand.findUnique({
+            where: { id: mainDemand.id },
+            include: {
+              usedMaterials: {
+                include: {
+                  material: true
+                }
+              }
+            }
+          });
+
+          if (updatedMain) {
+            const exclusiveUsed = updatedMain.usedMaterials.filter((um: any) => um.material && um.material.isExclusive);
+            if (exclusiveUsed.length > 0) {
+              const maxQuantity = Math.max(...exclusiveUsed.map((um: any) => um.quantity));
+              if (maxQuantity > 1) {
+                // Run split!
+                await handleExclusiveMaterialSplitting(updatedMain.id, tx);
+                splitCount += (maxQuantity - 1);
+              }
+            }
+          }
+        }, { maxWait: 15000, timeout: 30000 });
+      }
+
+      res.json({ success: true, healedCount, splitCount });
+    } catch (error) {
+      console.error('[DemandController.reprocessExclusiveDemands] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
   static async getAll(req: AuthRequest, res: Response) {
     try {
       const { electricianId } = req.query;

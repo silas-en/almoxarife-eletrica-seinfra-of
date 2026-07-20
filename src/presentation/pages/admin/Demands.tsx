@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2 } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -25,6 +25,23 @@ export default function Demands() {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [isSharing, setIsSharing] = useState(false);
   const [activeShareData, setActiveShareData] = useState<{ title: string; text: string; photos: string[] } | null>(null);
+
+  const [isReprocessing, setIsReprocessing] = useState(false);
+
+  const handleReprocessDemands = async () => {
+    setIsReprocessing(true);
+    try {
+      const res = await api.post('/demands/reprocess-exclusive');
+      const { healedCount, splitCount } = res.data;
+      showFeedback('success', `Demandas atualizadas! Clones unificados: ${healedCount}. Novos splits: ${splitCount}.`);
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+    } catch (err) {
+      console.error('Error reprocessing demands:', err);
+      showFeedback('error', 'Erro ao atualizar demandas. Tente novamente.');
+    } finally {
+      setIsReprocessing(false);
+    }
+  };
   
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -489,7 +506,19 @@ export default function Demands() {
           <h1 className="text-2xl font-bold text-gray-900">Demandas</h1>
           <p className="text-gray-600">Gestão de ordens de serviço e tarefas.</p>
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
+        <div className="flex gap-2 w-full md:w-auto flex-wrap md:flex-nowrap">
+          <button
+            onClick={handleReprocessDemands}
+            disabled={isReprocessing}
+            className="flex-1 md:flex-none bg-amber-600 text-white px-4 py-2 rounded-lg flex items-center justify-center hover:bg-amber-700 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {isReprocessing ? (
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-5 w-5 mr-2" />
+            )}
+            <span className="text-sm font-medium">Atualizar Demandas</span>
+          </button>
           <label className="flex-1 md:flex-none bg-white border border-gray-300 rounded-lg px-4 py-2 flex items-center cursor-pointer hover:bg-gray-50 transition-colors">
             <Upload className="h-5 w-5 mr-2 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Importar JSON</span>

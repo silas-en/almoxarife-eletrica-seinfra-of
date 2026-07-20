@@ -23,6 +23,7 @@ demandRouter.delete('/:id', adminMiddleware as any, DemandController.delete as a
 demandRouter.patch('/:id/approve', adminMiddleware as any, DemandController.approve as any);
 demandRouter.patch('/:id/toggle-exclude-separation', adminMiddleware as any, DemandController.toggleExcludeSeparation as any);
 
+demandRouter.post('/reprocess-exclusive', adminMiddleware as any, DemandController.reprocessExclusiveDemands as any);
 demandRouter.post('/bulk', adminMiddleware as any, DemandController.bulkCreate as any);
 demandRouter.post('/:id/finish', upload.any(), DemandController.finish as any);
 
