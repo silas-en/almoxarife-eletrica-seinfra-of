@@ -154,7 +154,7 @@ export default function InternalCommunications() {
           <div>
             <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tight flex items-center gap-2.5">
               <FileText className="h-7 w-7 text-red-600 shrink-0" />
-              Carregar CIs (comunicação interna)
+              Carregar CIs (comunicação interna) e Outros DOCS
             </h1>
             <p className="text-gray-500 text-xs mt-1 font-medium">
               Envio e consulta de comunicações internas em formato PDF.

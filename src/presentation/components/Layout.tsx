@@ -45,7 +45,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
     { name: 'Ferramentas', path: '/admin/tools', icon: Wrench },
     { name: 'EPIs & Equipamentos', path: '/admin/equipments', icon: Shield },
-    { name: 'Carregar CIs', path: '/admin/cis', icon: FileText },
+    { name: 'Carregar CIs e Outros DOCS', path: '/admin/cis', icon: FileText },
     { name: 'Usuários', path: '/admin/users', icon: Users },
     { name: 'Relatórios', path: '/admin/reports', icon: FileText },
   ] : [
@@ -53,7 +53,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Kits para Separação', path: '/admin/separation', icon: Layers },
     { name: 'Sobras a Retornar', path: '/admin/pending-returns', icon: RotateCcw },
     { name: 'EPIs & Equipamentos', path: '/admin/equipments', icon: Shield },
-    { name: 'Carregar CIs', path: '/admin/cis', icon: FileText },
+    { name: 'Carregar CIs e Outros DOCS', path: '/admin/cis', icon: FileText },
   ];
 
   const activeItem = menuItems.find(item => item.path === location.pathname);
