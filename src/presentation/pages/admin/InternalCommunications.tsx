@@ -187,7 +187,7 @@ export default function InternalCommunications() {
               <div className="p-5 border-b border-gray-150 bg-gray-50/50">
                 <h3 className="text-xs font-black uppercase tracking-wider text-gray-800 flex items-center gap-2">
                   <Upload className="h-4 w-4 text-blue-600" />
-                  Cadastrar Nova CI
+                  Cadastrar Nova CI/Doc
                 </h3>
                 <p className="text-gray-400 text-[10px] uppercase font-bold mt-1">
                   Adicionar documento PDF para disponibilização geral.
@@ -197,7 +197,7 @@ export default function InternalCommunications() {
               <form onSubmit={handleSubmit} className="p-5 space-y-5">
                 <div>
                   <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1.5">
-                    Nome / Título da CI <span className="text-red-500">*</span>
+                    Nome / Título da CI/Doc <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
