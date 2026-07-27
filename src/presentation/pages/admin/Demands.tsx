@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2, RefreshCw } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2, RefreshCw, CheckSquare } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -398,6 +398,34 @@ export default function Demands() {
   };
 
   const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedDemandIds, setSelectedDemandIds] = useState<string[]>([]);
+
+  const batchDeleteDemandsMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const offlineIds = ids.filter(id => id.startsWith('offline-'));
+      const onlineIds = ids.filter(id => !id.startsWith('offline-'));
+
+      for (const id of offlineIds) {
+        await IndexedDbService.deleteDemand(id);
+      }
+
+      if (onlineIds.length > 0) {
+        await api.post('/demands/batch-delete', { ids: onlineIds });
+      }
+      return ids.length;
+    },
+    onSuccess: (count, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      setSelectedDemandIds([]);
+      setIsSelectMode(false);
+      const total = count || variables.length;
+      showFeedback('success', `${total} ${total === 1 ? 'demanda foi excluída' : 'demandas foram excluídas'} com sucesso.`);
+    },
+    onError: () => {
+      showFeedback('error', 'Erro ao excluir demandas selecionadas.');
+    }
+  });
 
   const deleteDemandMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -489,6 +517,32 @@ export default function Demands() {
     });
   }
 
+  const toggleSelectDemand = (id: string) => {
+    setSelectedDemandIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const isAllSelected = filteredDemands.length > 0 && filteredDemands.every((d: any) => selectedDemandIds.includes(d.id));
+
+  const handleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedDemandIds([]);
+    } else {
+      setSelectedDemandIds(filteredDemands.map((d: any) => d.id));
+    }
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedDemandIds.length === 0) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Excluir Demandas Selecionadas',
+      message: `Tem certeza que deseja excluir as ${selectedDemandIds.length} demanda(s) selecionada(s)? Esta ação é definitiva e não pode ser desfeita.`,
+      onConfirm: () => batchDeleteDemandsMutation.mutate(selectedDemandIds)
+    });
+  };
+
   return (
     <Layout>
       {/* Feedback Message */}
@@ -535,7 +589,7 @@ export default function Demands() {
 
       <div className="flex gap-4 mb-6 border-b border-gray-200">
         <button
-          onClick={() => setActiveTab('PENDING')}
+          onClick={() => { setActiveTab('PENDING'); setIsSelectMode(false); setSelectedDemandIds([]); }}
           className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
             activeTab === 'PENDING' ? 'border-b-2 border-yellow-500 text-yellow-600' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -543,7 +597,7 @@ export default function Demands() {
           Pendentes
         </button>
         <button
-          onClick={() => setActiveTab('PENDING_APPROVAL')}
+          onClick={() => { setActiveTab('PENDING_APPROVAL'); setIsSelectMode(false); setSelectedDemandIds([]); }}
           className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
             activeTab === 'PENDING_APPROVAL' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -551,7 +605,7 @@ export default function Demands() {
           Em Aprovação
         </button>
         <button
-          onClick={() => setActiveTab('CONCLUDED')}
+          onClick={() => { setActiveTab('CONCLUDED'); setIsSelectMode(false); setSelectedDemandIds([]); }}
           className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
             activeTab === 'CONCLUDED' ? 'border-b-2 border-green-600 text-green-600' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -582,15 +636,68 @@ export default function Demands() {
                 <th className="px-6 py-3">Local</th>
                 <th className="px-6 py-3">Responsável</th>
                 <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3 text-right">Ações</th>
+                <th className="px-6 py-3 text-right">
+                  {!isSelectMode ? (
+                    <div className="flex items-center justify-end gap-2">
+                      <span>Ações</span>
+                      <button
+                        onClick={() => {
+                          setIsSelectMode(true);
+                          setSelectedDemandIds([]);
+                        }}
+                        className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-0.5 rounded font-bold transition-colors cursor-pointer flex items-center gap-1 border border-blue-200"
+                        title="Selecionar múltiplas demandas"
+                      >
+                        <CheckSquare className="h-3.5 w-3.5" /> Selecionar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-end gap-3">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-700 select-none bg-gray-100 px-2 py-0.5 rounded border border-gray-200 hover:bg-gray-200 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          onChange={handleSelectAll}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                        />
+                        <span>Selecionar tudo</span>
+                      </label>
+                      <button
+                        onClick={handleBatchDelete}
+                        disabled={selectedDemandIds.length === 0 || batchDeleteDemandsMutation.isPending}
+                        className="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white px-2.5 py-0.5 rounded text-xs font-bold transition-colors flex items-center gap-1 shadow-sm cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        {batchDeleteDemandsMutation.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                        Excluir ({selectedDemandIds.length})
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsSelectMode(false);
+                          setSelectedDemandIds([]);
+                        }}
+                        className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-0.5 rounded text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredDemands?.map((demand: any) => (
                 <tr 
                   key={demand.id} 
-                  className={`hover:bg-gray-50 transition-colors cursor-pointer group ${demand.isOfflinePending ? 'bg-amber-50/25 border-l-4 border-l-amber-500' : ''}`}
+                  className={`hover:bg-gray-50 transition-colors cursor-pointer group ${demand.isOfflinePending ? 'bg-amber-50/25 border-l-4 border-l-amber-500' : ''} ${isSelectMode && selectedDemandIds.includes(demand.id) ? 'bg-blue-50/50' : ''}`}
                   onClick={() => {
+                    if (isSelectMode) {
+                      toggleSelectDemand(demand.id);
+                      return;
+                    }
                     if (demand.isOfflinePending) {
                       handleEditDemand(demand);
                     } else {
@@ -632,56 +739,70 @@ export default function Demands() {
                     <StatusBadge status={demand.status} isOfflinePending={demand.isOfflinePending} />
                   </td>
                   <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-3 items-center">
-                      {!demand.isOfflinePending && demand.status === 'PENDING' && !demand.materialsDelivered && demand.plannedMaterials?.length > 0 && (
+                    {isSelectMode ? (
+                      <div 
+                        className="flex justify-end items-center py-1 px-2 cursor-pointer"
+                        onClick={() => toggleSelectDemand(demand.id)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedDemandIds.includes(demand.id)}
+                          onChange={() => {}}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-5 w-5 cursor-pointer pointer-events-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex justify-end gap-3 items-center">
+                        {!demand.isOfflinePending && demand.status === 'PENDING' && !demand.materialsDelivered && demand.plannedMaterials?.length > 0 && (
+                          <button 
+                            onClick={() => {
+                              setConfirmDialog({
+                                isOpen: true,
+                                title: 'Entregar Materiais',
+                                message: `Deseja registrar a entrega física de todos os materiais separados para esta demanda em "${demand.location}"?`,
+                                onConfirm: () => deliverDemandMutation.mutate(demand.id)
+                              });
+                            }}
+                            className="text-amber-600 hover:text-amber-800 flex items-center gap-1 text-xs font-bold"
+                            title="Entregar Materiais (Indicar que o kit foi retirado)"
+                          >
+                            <Package className="h-4 w-4 text-amber-500" />
+                            <span className="hidden md:inline">Entregar</span>
+                          </button>
+                        )}
+                        {((demand.status === 'CONCLUDED' || demand.status === 'PENDING_APPROVAL') && demand.photoUrl) && (
+                          <button
+                            onClick={() => handleWhatsAppShare(demand)}
+                            className="text-emerald-600 hover:text-emerald-800 flex items-center gap-1 text-xs font-bold"
+                            title="Compartilhar no WhatsApp"
+                          >
+                            <Share2 className="h-4 w-4" />
+                            <span className="hidden lg:inline">Compartilhar</span>
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => handleEditDemand(demand)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
                         <button 
                           onClick={() => {
                             setConfirmDialog({
                               isOpen: true,
-                              title: 'Entregar Materiais',
-                              message: `Deseja registrar a entrega física de todos os materiais separados para esta demanda em "${demand.location}"?`,
-                              onConfirm: () => deliverDemandMutation.mutate(demand.id)
+                              title: demand.isOfflinePending ? 'Excluir Demanda Local' : 'Excluir Demanda',
+                              message: demand.isOfflinePending 
+                                ? 'Deseja excluir esta demanda offline pendente? Esta ação é definitiva.'
+                                : 'Tem certeza que deseja excluir esta demanda definitivamente?',
+                              onConfirm: () => deleteDemandMutation.mutate(demand.id)
                             });
                           }}
-                          className="text-amber-600 hover:text-amber-800 flex items-center gap-1 text-xs font-bold"
-                          title="Entregar Materiais (Indicar que o kit foi retirado)"
+                          className="text-red-500 hover:text-red-700"
                         >
-                          <Package className="h-4 w-4 text-amber-500" />
-                          <span className="hidden md:inline">Entregar</span>
+                          <Trash2 className="h-4 w-4" />
                         </button>
-                      )}
-                      {((demand.status === 'CONCLUDED' || demand.status === 'PENDING_APPROVAL') && demand.photoUrl) && (
-                        <button
-                          onClick={() => handleWhatsAppShare(demand)}
-                          className="text-emerald-600 hover:text-emerald-800 flex items-center gap-1 text-xs font-bold"
-                          title="Compartilhar no WhatsApp"
-                        >
-                          <Share2 className="h-4 w-4" />
-                          <span className="hidden lg:inline">Compartilhar</span>
-                        </button>
-                      )}
-                      <button 
-                        onClick={() => handleEditDemand(demand)}
-                        className="text-blue-600 hover:text-blue-800"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setConfirmDialog({
-                            isOpen: true,
-                            title: demand.isOfflinePending ? 'Excluir Demanda Local' : 'Excluir Demanda',
-                            message: demand.isOfflinePending 
-                              ? 'Deseja excluir esta demanda offline pendente? Esta ação é definitiva.'
-                              : 'Tem certeza que deseja excluir esta demanda definitivamente?',
-                            onConfirm: () => deleteDemandMutation.mutate(demand.id)
-                          });
-                        }}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

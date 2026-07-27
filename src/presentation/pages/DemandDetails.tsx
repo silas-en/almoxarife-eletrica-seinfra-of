@@ -77,6 +77,7 @@ export default function DemandDetails() {
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [applyExclusionToReplicas, setApplyExclusionToReplicas] = useState(false);
   const [isEditingExecution, setIsEditingExecution] = useState(false);
   const [editFormData, setEditFormData] = useState({
     date: '',
@@ -738,6 +739,7 @@ export default function DemandDetails() {
         type: 'RECOVERED'
       })) || []
     });
+    setApplyExclusionToReplicas(false);
     setIsEditModalOpen(true);
   };
 
@@ -770,6 +772,14 @@ export default function DemandDetails() {
   const isAdmin = user?.role === 'ADMIN';
   const isElectrician = user?.role === 'ELECTRICIAN';
   const isDone = demand.status === 'PENDING_APPROVAL' || demand.status === 'CONCLUDED';
+
+  const removedExclusiveMaterials = (demand?.usedMaterials || []).filter((um: any) => {
+    const matId = String(um.materialId || um.material?.id || um.id || '').trim();
+    const mat = materials?.find((x: any) => String(x.id).trim() === matId) || um.material;
+    const isExclusive = Boolean((mat && mat.isExclusive && mat.isExclusive !== 'false' && mat.isExclusive !== '0') || (um.material && um.material.isExclusive && um.material.isExclusive !== 'false' && um.material.isExclusive !== '0'));
+    const stillInForm = editFormData.usedMaterials.some((m: any) => String(m.materialId || m.id || '').trim() === matId && Number(m.quantity) > 0);
+    return isExclusive && !stillInForm;
+  });
 
   return (
     <Layout>
@@ -1576,7 +1586,10 @@ export default function DemandDetails() {
       {user?.role === 'ADMIN' && (
         <Modal
           isOpen={isEditModalOpen}
-          onClose={() => setIsEditModalOpen(false)}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setApplyExclusionToReplicas(false);
+          }}
           title="Editar Demanda"
           maxWidth="max-w-2xl"
         >
@@ -1585,6 +1598,8 @@ export default function DemandDetails() {
               e.preventDefault(); 
               updateMutation.mutate({
                 ...editFormData,
+                applyExclusionToReplicas,
+                removedExclusiveMaterialIds: removedExclusiveMaterials.map((m: any) => m.materialId || m.material?.id),
                 returnedMaterials: [
                   ...editFormData.returnedMaterials.map(m => ({ ...m, type: 'DEFECTIVE' })),
                   ...editFormData.recoveredMaterials.map(m => ({ ...m, type: 'RECOVERED' }))
@@ -1997,6 +2012,29 @@ export default function DemandDetails() {
                       );
                     })}
                   </div>
+                  {removedExclusiveMaterials.length > 0 && (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg animate-fade-in">
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyExclusionToReplicas}
+                          onChange={(e) => setApplyExclusionToReplicas(e.target.checked)}
+                          className="mt-0.5 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                        />
+                        <div className="text-xs">
+                          <span className="font-bold text-gray-800 block">
+                            Aplicar exclusão do material exclusivo nas réplicas
+                          </span>
+                          <span className="text-gray-600 block mt-0.5 leading-relaxed">
+                            Ao marcar esta opção, as réplicas desta demanda ("segunda demanda para o mesmo local", "terceira demanda para o mesmo local", ...) também ficarão sem o registro de: <span className="font-semibold text-gray-800">{removedExclusiveMaterials.map((m: any) => {
+                              const matId = String(m.materialId || m.material?.id || m.id || '').trim();
+                              return (materials?.find((x: any) => String(x.id).trim() === matId) || m.material)?.name || 'material exclusivo';
+                            }).join(', ')}</span>.
+                          </span>
+                        </div>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* Recovered Materials in Edit */}

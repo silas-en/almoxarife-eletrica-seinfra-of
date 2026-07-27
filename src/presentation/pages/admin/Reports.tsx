@@ -98,6 +98,15 @@ export default function Reports() {
     }
   };
 
+  const getAccumulatedLabel = () => {
+    switch (range) {
+      case 'weekly': return 'Total acumulado nesta semana';
+      case 'monthly': return 'Total acumulado neste mês';
+      case 'yearly': return 'Total acumulado neste ano';
+      default: return '';
+    }
+  };
+
   return (
     <Layout>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -284,10 +293,10 @@ export default function Reports() {
                 <span className="text-sm font-bold text-gray-500 uppercase">Demandas</span>
               </div>
               <p className="text-3xl font-extrabold text-gray-900">
-                {viewingPeriod ? (report?.demandsCount ?? 0) : (periods?.reduce((sum: number, p: any) => sum + p.demandCount, 0) || 0)}
+                {viewingPeriod ? (report?.demandsCount ?? 0) : (periods?.[0]?.demandCount || 0)}
               </p>
               <p className="text-xs text-gray-400 mt-1">
-                {viewingPeriod ? `Concluídas no período ${getRangeTitle().toLowerCase()}` : `Total acumulado (${getRangeTitle().toLowerCase()})`}
+                {viewingPeriod ? `Concluídas no período ${getRangeTitle().toLowerCase()}` : getAccumulatedLabel()}
               </p>
             </div>
 

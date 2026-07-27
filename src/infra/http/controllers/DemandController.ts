@@ -97,6 +97,15 @@ function appendOrdinalToDescription(fullDescription: string, index: number): str
   return `${base}${suffix}${ref}`;
 }
 
+function cleanDescription(desc: string | null | undefined): string {
+  if (!desc) return '';
+  const parts = desc.split('###REF_PHOTO:');
+  const base = parts[0] || '';
+  const ref = parts.length > 1 ? '###REF_PHOTO:' + parts.slice(1).join('###REF_PHOTO:') : '';
+  const cleanedBase = base.replace(/\s*-\s*[^-\n]+?demanda para o mesmo local/gi, '').trim();
+  return ref ? `${cleanedBase}${ref}` : cleanedBase;
+}
+
 async function handleDemandExecutionSplitting(demandId: string, tx: any): Promise<string[]> {
   const demand = await tx.demand.findUnique({
     where: { id: demandId },
@@ -640,7 +649,12 @@ export class DemandController {
 
       const isAdmin = req.user?.role === 'ADMIN';
 
-      const existingDemand = await prisma.demand.findUnique({ where: { id } });
+      const existingDemand = await prisma.demand.findUnique({ 
+        where: { id },
+        include: {
+          usedMaterials: { include: { material: true } }
+        }
+      });
       if (!existingDemand) return res.status(404).json({ error: 'Demand not found' });
 
       if (!isAdmin && existingDemand.status === 'CONCLUDED') {
@@ -837,6 +851,65 @@ export class DemandController {
             await tx.returnedMaterial.createMany({
               data: returnedToCreate
             });
+          }
+
+          const applyExclusion = req.body.applyExclusionToReplicas === true || req.body.applyExclusionToReplicas === 'true';
+          if (applyExclusion && parsedUsedMaterials) {
+            let idsToRemove: string[] = [];
+            if (req.body.removedExclusiveMaterialIds) {
+              if (Array.isArray(req.body.removedExclusiveMaterialIds)) {
+                idsToRemove = req.body.removedExclusiveMaterialIds;
+              } else if (typeof req.body.removedExclusiveMaterialIds === 'string') {
+                try {
+                  idsToRemove = JSON.parse(req.body.removedExclusiveMaterialIds);
+                } catch {
+                  idsToRemove = req.body.removedExclusiveMaterialIds.split(',').map((idStr: string) => idStr.trim()).filter(Boolean);
+                }
+              }
+            }
+            if (idsToRemove.length === 0) {
+              const newIds = new Set(parsedUsedMaterials.map((m: any) => String(m.materialId || m.id || '').trim()));
+              idsToRemove = (existingDemand.usedMaterials || [])
+                .filter((um: any) => um.material && um.material.isExclusive && !newIds.has(String(um.materialId).trim()))
+                .map((um: any) => um.materialId);
+            }
+
+            if (idsToRemove.length > 0) {
+              const candidates = await tx.demand.findMany({
+                where: {
+                  location: existingDemand.location,
+                  status: 'CONCLUDED'
+                },
+                select: { id: true, date: true, description: true }
+              });
+
+              const mainCleanDesc = cleanDescription(existingDemand.description).trim().toLowerCase();
+              const mainDateStr = new Date(existingDemand.date).toISOString().split('T')[0];
+
+              const replicaIds = candidates.filter((d: any) => {
+                if (d.id === id) return false;
+                const dDateStr = new Date(d.date).toISOString().split('T')[0];
+                if (dDateStr !== mainDateStr) return false;
+                const dCleanDesc = cleanDescription(d.description).trim().toLowerCase();
+                return dCleanDesc === mainCleanDesc;
+              }).map((d: any) => d.id);
+
+              if (replicaIds.length > 0) {
+                await tx.usedMaterial.deleteMany({
+                  where: {
+                    demandId: { in: replicaIds },
+                    materialId: { in: idsToRemove }
+                  }
+                });
+
+                for (const repId of replicaIds) {
+                  await AuditService.log('UPDATE_REPLICA_EXCLUDE_MATERIAL', 'DEMAND', req.user!.id, repId, {
+                    mainDemandId: id,
+                    removedMaterialIds: idsToRemove
+                  }, tx);
+                }
+              }
+            }
           }
         }
 
@@ -1048,6 +1121,28 @@ export class DemandController {
 
       res.status(204).send();
     } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async batchDelete(req: AuthRequest, res: Response) {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'Nenhum ID fornecido para exclusão' });
+      }
+
+      await prisma.demand.deleteMany({
+        where: { id: { in: ids } }
+      });
+
+      for (const id of ids) {
+        await AuditService.log('DELETE', 'DEMAND', req.user!.id, id);
+      }
+
+      res.status(200).json({ message: 'Demandas excluídas com sucesso', count: ids.length });
+    } catch (error) {
+      console.error('[DemandController.batchDelete] Error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
