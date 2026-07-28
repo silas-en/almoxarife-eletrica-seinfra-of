@@ -187,6 +187,99 @@ export class StorageService {
     return [...Object.values(merged), ...externalOrManual];
   }
 
+  static condenseMultipleDemands(demands: any[]): any[] {
+    if (!Array.isArray(demands) || demands.length === 0) return demands || [];
+
+    const getBaseDesc = (desc: string | null | undefined): string => {
+      if (!desc) return '';
+      const parts = desc.split('###REF_PHOTO:');
+      let base = parts[0] || '';
+      base = base.replace(/\s*-\s*[^-\n]+?demanda para o mesmo local/gi, '').trim();
+      base = base.replace(/^demanda m[úu]ltipla:\s*\d+\s*servi[çc]os de\s*/i, '').trim();
+      return base;
+    };
+
+    const mergeMatLists = (lists: any[][]) => {
+      const merged: Record<string, any> = {};
+      for (const list of lists) {
+        if (!Array.isArray(list)) continue;
+        for (const item of list) {
+          if (!item) continue;
+          const key = String(item.materialId || item.material?.id || item.id || `name-${item.materialName || item.material?.name || ''}`).trim();
+          if (!merged[key]) {
+            merged[key] = {
+              ...item,
+              quantity: Number(item.quantity) || 0,
+              material: item.material ? { ...item.material } : item.material
+            };
+          } else {
+            merged[key].quantity += Number(item.quantity) || 0;
+          }
+        }
+      }
+      return Object.values(merged);
+    };
+
+    const groups: Record<string, any[]> = {};
+    const groupOrder: string[] = [];
+
+    for (const d of demands) {
+      const dateKey = d.date instanceof Date 
+        ? d.date.toISOString().slice(0, 10) 
+        : new Date(d.date || Date.now()).toISOString().slice(0, 10);
+      const locKey = (d.location || '').trim().toLowerCase();
+      const elecKey = (d.electricians || []).map((e: any) => e.id || e.name || '').sort().join('_');
+      const descKey = getBaseDesc(d.description).toLowerCase();
+      
+      const key = `${dateKey}_${locKey}_${elecKey}_${descKey}`;
+      if (!groups[key]) {
+        groups[key] = [];
+        groupOrder.push(key);
+      }
+      groups[key].push(d);
+    }
+
+    const condensedList: any[] = [];
+    for (const key of groupOrder) {
+      const group = groups[key];
+      const isReplicaGroup = group.length > 1 || group.some((d: any) => 
+        d.description?.toLowerCase().includes('demanda para o mesmo local') || 
+        d.description?.toLowerCase().includes('demanda múltipla') || 
+        d.description?.toLowerCase().includes('demanda multipla') ||
+        (Number(d.repetition) > 1) || (Number(d.count) > 1)
+      );
+
+      if (!isReplicaGroup) {
+        const d = { ...group[0] };
+        d.repetition = Number(d.repetition) || Number(d.count) || 1;
+        d.count = d.repetition;
+        condensedList.push(d);
+      } else {
+        const totalCount = group.reduce((sum: number, d: any) => sum + (Number(d.repetition) || Number(d.count) || 1), 0);
+        const mainDemand = group.find((d: any) => !d.description?.toLowerCase().includes('demanda para o mesmo local')) || group[0];
+        
+        const baseDesc = getBaseDesc(mainDemand.description) || 'serviço executado';
+        const refPart = mainDemand.description?.includes('###REF_PHOTO:') ? '###REF_PHOTO:' + mainDemand.description.split('###REF_PHOTO:')[1] : '';
+        const newDescription = `demanda múltipla: ${totalCount} serviços de ${baseDesc}${refPart}`;
+
+        const condensed = {
+          ...mainDemand,
+          description: newDescription,
+          repetition: totalCount,
+          count: totalCount,
+          isMultiple: true,
+          plannedMaterials: mergeMatLists(group.map((d: any) => d.plannedMaterials)),
+          usedMaterials: mergeMatLists(group.map((d: any) => d.usedMaterials)),
+          returnedMaterials: mergeMatLists(group.map((d: any) => d.returnedMaterials)),
+        };
+
+        condensedList.push(condensed);
+      }
+    }
+
+    return condensedList;
+  }
+
   static async expandDemands(demands: any[]): Promise<any[]> {
     try {
       const allMaterials = await prisma.material.findMany();
@@ -208,10 +301,10 @@ export class StorageService {
           returnedMaterials
         });
       }
-      return expandedDemands;
+      return StorageService.condenseMultipleDemands(expandedDemands);
     } catch (e) {
       console.error('[StorageService.expandDemands] Error expanding demands:', e);
-      return demands;
+      return StorageService.condenseMultipleDemands(demands);
     }
   }
 

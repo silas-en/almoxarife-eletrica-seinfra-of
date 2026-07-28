@@ -183,12 +183,35 @@ export class IndexedDbService {
     });
   }
 
+  static async mergeOfflineCompletionsIntoDemands(demands: any[]): Promise<any[]> {
+    if (!demands || !Array.isArray(demands) || demands.length === 0) return demands;
+    try {
+      const completions = await this.getAllCompletions();
+      if (!completions || completions.length === 0) return demands;
+      const completionIds = new Set(completions.map(c => String(c.id)));
+      return demands.map(d => {
+        if (d && d.id !== undefined && completionIds.has(String(d.id))) {
+          return {
+            ...d,
+            status: 'PENDING_APPROVAL',
+            isOfflineCompleted: true
+          };
+        }
+        return d;
+      });
+    } catch (err) {
+      console.warn('[IndexedDbService] Error merging offline completions:', err);
+      return demands;
+    }
+  }
+
   // --- STORE_CACHED_DEMANDS (Actual Demands List Cached) ---
-  static async saveCachedDemands(demands: any[], clearFirst: boolean = true): Promise<void> {
-    if (!demands || !Array.isArray(demands)) {
-      console.warn('[IndexedDbService Logs] saveCachedDemands ignored because "demands" is not a valid array:', demands);
+  static async saveCachedDemands(incomingDemands: any[], clearFirst: boolean = true): Promise<void> {
+    if (!incomingDemands || !Array.isArray(incomingDemands)) {
+      console.warn('[IndexedDbService Logs] saveCachedDemands ignored because "demands" is not a valid array:', incomingDemands);
       return;
     }
+    const demands = await this.mergeOfflineCompletionsIntoDemands(incomingDemands);
 
     console.log('[IndexedDbService Logs] Starting saveCachedDemands. Incoming demands count:', demands.length, '| clearFirst:', clearFirst);
 
@@ -268,13 +291,14 @@ export class IndexedDbService {
       const store = transaction.objectStore(STORE_CACHED_DEMANDS);
       const request = store.getAll();
 
-      request.onsuccess = () => {
-        const results = request.result || [];
+      request.onsuccess = async () => {
+        let results = request.result || [];
         results.forEach((item: any) => {
           if (item && item.id !== undefined) {
             item.id = String(item.id);
           }
         });
+        results = await IndexedDbService.mergeOfflineCompletionsIntoDemands(results);
         resolve(results);
       };
       request.onerror = () => reject(request.error);
@@ -291,7 +315,7 @@ export class IndexedDbService {
       const store = transaction.objectStore(STORE_CACHED_DEMANDS);
 
       const request = store.getAll();
-      request.onsuccess = () => {
+      request.onsuccess = async () => {
         const allCached = request.result || [];
         console.log(`[IndexedDbService getCachedDemand] Checking ID: "${stringId}". Total in cache:`, allCached.length);
 
@@ -304,6 +328,11 @@ export class IndexedDbService {
         if (found) {
           if (found.id !== undefined) {
             found.id = String(found.id);
+          }
+          const completion = await IndexedDbService.getCompletion(found.id);
+          if (completion) {
+            found.status = 'PENDING_APPROVAL';
+            found.isOfflineCompleted = true;
           }
           console.log(`[IndexedDbService getCachedDemand] Match FOUND for ID: "${stringId}":`, found);
           resolve(found);

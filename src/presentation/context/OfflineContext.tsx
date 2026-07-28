@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { IndexedDbService, OfflineDemand, OfflineCompletion } from '../../infra/storage/indexedDbService.ts';
 import api from '../services/api.ts';
 
@@ -29,6 +30,8 @@ interface OfflineContextType {
 const OfflineContext = createContext<OfflineContextType | undefined>(undefined);
 
 export function OfflineProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const syncingRef = useRef<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [pendingOfflineDemands, setPendingOfflineDemands] = useState<OfflineDemand[]>([]);
@@ -78,6 +81,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
 
     await IndexedDbService.saveDemand(offlineRecord);
     await refreshPendingStatus();
+    if (navigator.onLine) {
+      setTimeout(() => {
+        if (navigator.onLine) syncNow();
+      }, 3000);
+    }
   };
 
   const saveOfflineCompletion = async (
@@ -163,10 +171,15 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
     }
 
     await refreshPendingStatus();
+    if (navigator.onLine) {
+      setTimeout(() => {
+        if (navigator.onLine) syncNow();
+      }, 3000);
+    }
   };
 
   const syncNow = async () => {
-    if (syncState === 'syncing') return;
+    if (syncState === 'syncing' || syncingRef.current) return;
 
     const listDemands = await IndexedDbService.getAllDemands();
     const listCompletions = await IndexedDbService.getAllCompletions();
@@ -176,113 +189,131 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    syncingRef.current = true;
     setSyncState('syncing');
     setSyncErrorMsg(null);
 
     let hasErrors = false;
     let lastErrorReason = '';
 
-    // 1. Sync creations
-    for (const demand of listDemands) {
-      try {
-        const data = new FormData();
-        data.append('date', demand.formData.date);
-        data.append('location', demand.formData.location);
-        data.append('googleMapsUrl', demand.formData.googleMapsUrl || '');
-        data.append('description', demand.formData.description);
-        data.append('clientNumber', demand.formData.clientNumber || '');
-        data.append('electricianIds', JSON.stringify(demand.formData.electricianIds));
-        data.append('materials', JSON.stringify(demand.formData.materials));
-        if (demand.formData.isPriority !== undefined) {
-          data.append('isPriority', String(demand.formData.isPriority));
-        }
-        if (demand.formData.priorityExecutionDate !== undefined) {
-          data.append('priorityExecutionDate', demand.formData.priorityExecutionDate || '');
-        }
-        if (demand.formData.repetition !== undefined) {
-          data.append('repetition', String(demand.formData.repetition || 1));
-        }
-
-        if (demand.photoBlob && demand.photoName && demand.photoType) {
-          const file = new File([demand.photoBlob], demand.photoName, { type: demand.photoType });
-          data.append('photo', file);
-        }
-
-        const response = await api.post('/demands', data);
-        if (response.status >= 200 && response.status < 300) {
-          await IndexedDbService.deleteDemand(demand.id);
-        } else {
-          throw new Error(`Código de status inválido ao criar demanda: ${response.status}`);
-        }
-      } catch (err: any) {
-        hasErrors = true;
-        console.error(`OfflineContext: Sincronização da criação de demanda ${demand.id} falhou:`, err);
-        lastErrorReason = err.response?.data?.error || err.message || 'Erro ao sincronizar nova demanda.';
-      }
-    }
-
-    // 2. Sync completions (executions)
-    for (const completion of listCompletions) {
-      try {
-        const data = new FormData();
-        data.append('usedMaterials', JSON.stringify(completion.usedMaterials));
-        data.append('replacedMaterials', JSON.stringify(completion.replacedMaterials));
-        data.append('vehicles', completion.vehicles.join(','));
-        data.append('tools', completion.tools.join(','));
-        data.append('transformerNumber', completion.transformerNumber || '');
-        data.append('observation', completion.observation || '');
-
-        if (completion.photoBlob && completion.photoName && completion.photoType) {
-          const file = new File([completion.photoBlob], completion.photoName, { type: completion.photoType });
-          data.append('photo', file);
-        }
-
-        if (completion.additionalPhotos && Array.isArray(completion.additionalPhotos)) {
-          completion.additionalPhotos.forEach((ap: any, idx: number) => {
-            if (ap.blob && ap.name && ap.type) {
-              const file = new File([ap.blob], ap.name, { type: ap.type });
-              data.append(`photo_extra_${idx}`, file);
-            }
-          });
-        }
-
-        const response = await api.post(`/demands/${completion.id}/finish`, data);
-        if (response.status >= 200 && response.status < 300) {
-          await IndexedDbService.deleteCompletion(completion.id);
-        } else {
-          throw new Error(`Código de status inválido ao finalizar demanda: ${response.status}`);
-        }
-      } catch (err: any) {
-        hasErrors = true;
-        console.error(`OfflineContext: Sincronização da execução da demanda ${completion.id} falhou:`, err);
-        lastErrorReason = err.response?.data?.error || err.message || 'Erro ao sincronizar finalização.';
-      }
-    }
-
-    // 3. Keep cache up-to-date
     try {
-      if (navigator.onLine) {
-        const res = await api.get('/demands');
-        if (res.data) {
-          await IndexedDbService.saveCachedDemands(res.data);
+      // 1. Sync creations
+      for (const demand of listDemands) {
+        try {
+          const data = new FormData();
+          data.append('date', demand.formData.date);
+          data.append('location', demand.formData.location);
+          data.append('googleMapsUrl', demand.formData.googleMapsUrl || '');
+          data.append('description', demand.formData.description);
+          data.append('clientNumber', demand.formData.clientNumber || '');
+          data.append('electricianIds', JSON.stringify(demand.formData.electricianIds));
+          data.append('materials', JSON.stringify(demand.formData.materials));
+          if (demand.formData.isPriority !== undefined) {
+            data.append('isPriority', String(demand.formData.isPriority));
+          }
+          if (demand.formData.priorityExecutionDate !== undefined) {
+            data.append('priorityExecutionDate', demand.formData.priorityExecutionDate || '');
+          }
+          if (demand.formData.repetition !== undefined) {
+            data.append('repetition', String(demand.formData.repetition || 1));
+          }
+
+          if (demand.photoBlob && demand.photoName && demand.photoType) {
+            const file = new File([demand.photoBlob], demand.photoName, { type: demand.photoType });
+            data.append('photo', file);
+          }
+
+          const response = await api.post('/demands', data);
+          if (response.status >= 200 && response.status < 300) {
+            const newServerId = response.data?.id;
+            await IndexedDbService.deleteDemand(demand.id);
+            if (newServerId && newServerId !== demand.id) {
+              const matchingCompletion = await IndexedDbService.getCompletion(demand.id);
+              if (matchingCompletion) {
+                await IndexedDbService.deleteCompletion(demand.id);
+                matchingCompletion.id = newServerId;
+                await IndexedDbService.saveCompletion(matchingCompletion);
+                const inMem = listCompletions.find(c => c.id === demand.id);
+                if (inMem) inMem.id = newServerId;
+              }
+            }
+          } else {
+            throw new Error(`Código de status inválido ao criar demanda: ${response.status}`);
+          }
+        } catch (err: any) {
+          hasErrors = true;
+          console.error(`OfflineContext: Sincronização da criação de demanda ${demand.id} falhou:`, err);
+          lastErrorReason = err.response?.data?.error || err.message || 'Erro ao sincronizar nova demanda.';
         }
       }
-    } catch (err) {
-      console.warn('OfflineContext: Failed to update post-sync demands cache', err);
-    }
 
-    await refreshPendingStatus();
+      // 2. Sync completions (executions)
+      for (const completion of listCompletions) {
+        try {
+          const data = new FormData();
+          data.append('usedMaterials', JSON.stringify(completion.usedMaterials));
+          data.append('replacedMaterials', JSON.stringify(completion.replacedMaterials));
+          data.append('vehicles', completion.vehicles.join(','));
+          data.append('tools', completion.tools.join(','));
+          data.append('transformerNumber', completion.transformerNumber || '');
+          data.append('observation', completion.observation || '');
 
-    if (hasErrors) {
-      setSyncState('error');
-      setSyncErrorMsg(lastErrorReason || 'Alguns itens não puderam ser enviados.');
-    } else {
-      setSyncState('success');
-      setLastSyncTime(new Date());
-      const t = setTimeout(() => {
-        setSyncState('idle');
-      }, 5000);
-      return () => clearTimeout(t);
+          if (completion.photoBlob && completion.photoName && completion.photoType) {
+            const file = new File([completion.photoBlob], completion.photoName, { type: completion.photoType });
+            data.append('photo', file);
+          }
+
+          if (completion.additionalPhotos && Array.isArray(completion.additionalPhotos)) {
+            completion.additionalPhotos.forEach((ap: any, idx: number) => {
+              if (ap.blob && ap.name && ap.type) {
+                const file = new File([ap.blob], ap.name, { type: ap.type });
+                data.append(`photo_extra_${idx}`, file);
+              }
+            });
+          }
+
+          const response = await api.post(`/demands/${completion.id}/finish`, data);
+          if (response.status >= 200 && response.status < 300) {
+            await IndexedDbService.deleteCompletion(completion.id);
+          } else {
+            throw new Error(`Código de status inválido ao finalizar demanda: ${response.status}`);
+          }
+        } catch (err: any) {
+          hasErrors = true;
+          console.error(`OfflineContext: Sincronização da execução da demanda ${completion.id} falhou:`, err);
+          lastErrorReason = err.response?.data?.error || err.message || 'Erro ao sincronizar finalização.';
+        }
+      }
+
+      // 3. Keep cache up-to-date
+      try {
+        if (navigator.onLine) {
+          const res = await api.get('/demands');
+          if (res.data) {
+            await IndexedDbService.saveCachedDemands(res.data);
+          }
+        }
+      } catch (err) {
+        console.warn('OfflineContext: Failed to update post-sync demands cache', err);
+      }
+
+      await refreshPendingStatus();
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['demand'] });
+
+      if (hasErrors) {
+        setSyncState('error');
+        setSyncErrorMsg(lastErrorReason || 'Alguns itens não puderam ser enviados.');
+      } else {
+        setSyncState('success');
+        setLastSyncTime(new Date());
+        const t = setTimeout(() => {
+          setSyncState('idle');
+        }, 5000);
+        return () => clearTimeout(t);
+      }
+    } finally {
+      syncingRef.current = false;
     }
   };
 
@@ -429,7 +460,7 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
       } else {
         setIsOnline(false);
       }
-    }, 30000);
+    }, 10000);
 
     return () => {
       window.removeEventListener('online', updateOnlineStatus);

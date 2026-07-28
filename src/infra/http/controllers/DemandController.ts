@@ -985,6 +985,12 @@ export class DemandController {
 
       if (!demand) return res.status(404).json({ error: 'Demand not found' });
 
+      // Idempotency check: prevent duplicate baixa if the demand is already CONCLUDED (approved)
+      if (demand.status === 'CONCLUDED') {
+        console.log(`[DemandController.finish] Demand ${id} is already CONCLUDED. Skipping execution to prevent duplicate baixa.`);
+        return res.json({ message: 'Demanda já concluída e aprovada.', alreadyConcluded: true });
+      }
+
       // Transactions to ensure atomicity
       await prisma.$transaction(async (tx) => {
         // 0. Clear existing completion data (if any) to allow for re-finishing (edits)

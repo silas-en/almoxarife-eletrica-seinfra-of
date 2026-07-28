@@ -79,6 +79,7 @@ export default function DemandDetails() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [applyExclusionToReplicas, setApplyExclusionToReplicas] = useState(false);
   const [isEditingExecution, setIsEditingExecution] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [editFormData, setEditFormData] = useState({
     date: '',
     location: '',
@@ -552,6 +553,7 @@ export default function DemandDetails() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting || finishMutation.isPending) return;
     if (!photo && !isEditingExecution) {
       setFeedback({ type: 'error', message: 'A foto do serviço é obrigatória!' });
       return;
@@ -567,76 +569,81 @@ export default function DemandDetails() {
       return;
     }
 
-    const executeOfflineSave = async () => {
-      try {
-        await saveOfflineCompletion(
-          id!,
-          usedMaterials,
-          replacedMaterials,
-          vehicles,
-          selectedTools,
-          trafo,
-          obs,
-          photo,
-          extraPhotos
-        );
-        setFeedback({ 
-          type: 'success', 
-          message: 'Sem internet! Serviço finalizado e salvo localmente de forma segura. A sincronização com a prefeitura ocorrerá automaticamente ao detectar conexão.' 
-        });
-        setTimeout(() => navigate('/'), 2500);
-      } catch (err) {
-        console.error('Error saving completion offline:', err);
-        setFeedback({ type: 'error', message: 'Erro ao registrar serviço localmente.' });
-      }
-    };
-
-    if (!isOnline || !navigator.onLine) {
-      console.log('[DemandDetails Completion] Device detected offline. Saving to local database indexedDB...');
-      await executeOfflineSave();
-      return;
-    }
-
-    console.log('[DemandDetails Completion] Device detected online. Attempting remote server API submission...');
-    const formData = new FormData();
-    if (photo) {
-      formData.append('photo', photo);
-    }
-    extraPhotos.forEach((file, index) => {
-      formData.append(`extra_photo_${index}`, file);
-    });
-    formData.append('usedMaterials', JSON.stringify(usedMaterials));
-    formData.append('replacedMaterials', JSON.stringify(replacedMaterials));
-    formData.append('vehicles', vehicles.join(','));
-    formData.append('tools', selectedTools.join(','));
-    formData.append('transformerNumber', trafo);
-    formData.append('observation', obs);
-
+    setIsSubmitting(true);
     try {
-      setFeedback({ type: 'success', message: 'Enviando serviço concluído para a prefeitura...' });
-      const response = await api.post(`/demands/${id}/finish`, formData);
-      if (response.status >= 200 && response.status < 300) {
-        queryClient.invalidateQueries({ queryKey: ['demands'] });
-        queryClient.invalidateQueries({ queryKey: ['demand', id] });
-        setIsEditingExecution(false);
-        setFeedback({ type: 'success', message: 'Demanda enviada para aprovação do administrador!' });
-        setTimeout(() => navigate('/'), 2000);
-      } else {
-        throw new Error(`Código de status de API inválido: ${response.status}`);
-      }
-    } catch (err: any) {
-      const isNetworkError = !err.response || err.code === 'ERR_NETWORK' || err.message?.includes('Network Error') || !navigator.onLine;
-      if (isNetworkError) {
-        console.warn('[DemandDetails Completion] Server API post failed with network/connectivity error. Redirecting to offline local storage...', err);
+      const executeOfflineSave = async () => {
+        try {
+          await saveOfflineCompletion(
+            id!,
+            usedMaterials,
+            replacedMaterials,
+            vehicles,
+            selectedTools,
+            trafo,
+            obs,
+            photo,
+            extraPhotos
+          );
+          setFeedback({ 
+            type: 'success', 
+            message: 'Sem internet! Serviço finalizado e salvo localmente de forma segura. A sincronização com a prefeitura ocorrerá automaticamente ao detectar conexão.' 
+          });
+          setTimeout(() => navigate('/'), 2500);
+        } catch (err) {
+          console.error('Error saving completion offline:', err);
+          setFeedback({ type: 'error', message: 'Erro ao registrar serviço localmente.' });
+        }
+      };
+
+      if (!isOnline || !navigator.onLine) {
+        console.log('[DemandDetails Completion] Device detected offline. Saving to local database indexedDB...');
         await executeOfflineSave();
-      } else {
-        console.error('[DemandDetails Completion] Standard validation/API returned error:', err);
-        setFeedback({ 
-          type: 'error', 
-          message: err.response?.data?.error || 'Erro ao finalizar serviço. Verifique se preencheu todos os campos e a foto.' 
-        });
-        setTimeout(() => setFeedback(null), 5000);
+        return;
       }
+
+      console.log('[DemandDetails Completion] Device detected online. Attempting remote server API submission...');
+      const formData = new FormData();
+      if (photo) {
+        formData.append('photo', photo);
+      }
+      extraPhotos.forEach((file, index) => {
+        formData.append(`extra_photo_${index}`, file);
+      });
+      formData.append('usedMaterials', JSON.stringify(usedMaterials));
+      formData.append('replacedMaterials', JSON.stringify(replacedMaterials));
+      formData.append('vehicles', vehicles.join(','));
+      formData.append('tools', selectedTools.join(','));
+      formData.append('transformerNumber', trafo);
+      formData.append('observation', obs);
+
+      try {
+        setFeedback({ type: 'success', message: 'Enviando serviço concluído para a prefeitura...' });
+        const response = await api.post(`/demands/${id}/finish`, formData);
+        if (response.status >= 200 && response.status < 300) {
+          queryClient.invalidateQueries({ queryKey: ['demands'] });
+          queryClient.invalidateQueries({ queryKey: ['demand', id] });
+          setIsEditingExecution(false);
+          setFeedback({ type: 'success', message: 'Demanda enviada para aprovação do administrador!' });
+          setTimeout(() => navigate('/'), 2000);
+        } else {
+          throw new Error(`Código de status de API inválido: ${response.status}`);
+        }
+      } catch (err: any) {
+        const isNetworkError = !err.response || err.code === 'ERR_NETWORK' || err.message?.includes('Network Error') || !navigator.onLine;
+        if (isNetworkError) {
+          console.warn('[DemandDetails Completion] Server API post failed with network/connectivity error. Redirecting to offline local storage...', err);
+          await executeOfflineSave();
+        } else {
+          console.error('[DemandDetails Completion] Standard validation/API returned error:', err);
+          setFeedback({ 
+            type: 'error', 
+            message: err.response?.data?.error || 'Erro ao finalizar serviço. Verifique se preencheu todos os campos e a foto.' 
+          });
+          setTimeout(() => setFeedback(null), 5000);
+        }
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -791,6 +798,16 @@ export default function DemandDetails() {
           {feedback.type === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
           <span className="font-medium">{feedback.message}</span>
           <button onClick={() => setFeedback(null)} className="ml-2 hover:opacity-70"><Plus className="h-4 w-4 rotate-45" /></button>
+        </div>
+      )}
+
+      {demand?.isOfflineCompleted && (
+        <div className="mb-6 bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+          <Clock className="h-6 w-6 text-yellow-600 flex-shrink-0 animate-pulse" />
+          <div>
+            <p className="font-bold">Baixa registrada no modo offline</p>
+            <p className="text-sm">Esta demanda foi finalizada localmente e está na fila para envio automático à prefeitura assim que houver conexão estável.</p>
+          </div>
         </div>
       )}
 
@@ -1448,10 +1465,10 @@ export default function DemandDetails() {
 
               <button
                 type="submit"
-                disabled={finishMutation.isPending}
+                disabled={finishMutation.isPending || isSubmitting}
                 className="w-full bg-green-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-green-700 flex items-center justify-center disabled:opacity-50"
               >
-                {finishMutation.isPending ? <Loader2 className="animate-spin h-6 w-6" /> : (
+                {finishMutation.isPending || isSubmitting ? <Loader2 className="animate-spin h-6 w-6" /> : (
                   <>
                     <CheckCircle className="h-6 w-6 mr-2" /> {isEditingExecution ? 'SALVAR ALTERAÇÕES' : 'FINALIZAR SERVIÇO'}
                   </>

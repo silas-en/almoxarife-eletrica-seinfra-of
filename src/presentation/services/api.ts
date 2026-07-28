@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { IndexedDbService } from '../../infra/storage/indexedDbService.ts';
 
 const api = axios.create({
   baseURL: '/api',
@@ -13,7 +14,23 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => {
+  async (response) => {
+    try {
+      const url = response.config?.url || '';
+      if (url.includes('/demands') && response.data) {
+        if (Array.isArray(response.data)) {
+          response.data = await IndexedDbService.mergeOfflineCompletionsIntoDemands(response.data);
+        } else if (typeof response.data === 'object' && response.data.id) {
+          const completion = await IndexedDbService.getCompletion(String(response.data.id));
+          if (completion) {
+            response.data.status = 'PENDING_APPROVAL';
+            response.data.isOfflineCompleted = true;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[api interceptor] Error merging offline completions:', e);
+    }
     return response;
   },
   (error) => {

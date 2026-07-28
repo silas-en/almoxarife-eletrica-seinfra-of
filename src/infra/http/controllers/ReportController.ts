@@ -67,7 +67,7 @@ export class ReportController {
           date: { gte: startDate, lte: endDate },
           status: 'CONCLUDED'
         },
-        select: { date: true }
+        select: { date: true, repetition: true }
       });
 
       const periods = intervals.map(interval => {
@@ -76,14 +76,16 @@ export class ReportController {
           sr.endDate.getTime() === interval.end.getTime()
         );
 
-        const demandCount = allDemandDates.filter(d => 
-          d.date >= interval.start && d.date <= interval.end
-        ).length;
+        const demandCount = allDemandDates
+          .filter(d => d.date >= interval.start && d.date <= interval.end)
+          .reduce((sum, d) => sum + (Number(d.repetition) || 1), 0);
 
         const reportId = savedReports.find(sr => 
           sr.startDate.getTime() === interval.start.getTime() && 
           sr.endDate.getTime() === interval.end.getTime()
         )?.id;
+
+        const isCurrent = interval.start <= now && interval.end >= now;
 
         return {
           start: format(interval.start, 'dd/MM/yyyy'),
@@ -91,9 +93,10 @@ export class ReportController {
           referenceDate: interval.start.toISOString(),
           isSaved,
           reportId,
-          demandCount
+          demandCount,
+          isCurrent
         };
-      });
+      }).filter(p => p.demandCount > 0);
 
       res.json(periods);
     } catch (error) {
@@ -186,7 +189,7 @@ export class ReportController {
           referenceDate: startRange.toISOString(),
         },
         data: grouped,
-        demandsCount: demands.length,
+        demandsCount: mappedDemands.reduce((sum: number, d: any) => sum + (Number(d.repetition) || Number(d.count) || 1), 0),
         recovered: mappedRecovered,
         isSaved: !!savedReport,
         savedId: savedReport?.id
@@ -408,7 +411,8 @@ export class ReportController {
         doc.addPage();
 
         // --- CONTEÚDO DAS DEMANDAS ---
-        const totals: any = { used: {}, returned: {}, recovered: {}, totalDemands: demands.length };
+        const totalDemandsCount = demands.reduce((sum: number, d: any) => sum + (Number(d.repetition) || Number(d.count) || 1), 0);
+        const totals: any = { used: {}, returned: {}, recovered: {}, totalDemands: totalDemandsCount };
         
         standaloneRecovered.forEach((m: any) => {
           const key = m.materialId || `MANUAL-${m.materialName}`;
@@ -422,10 +426,11 @@ export class ReportController {
           totals.recovered[key].quantity += m.quantity;
         });
 
-        const materialDemandIds: Record<string, Set<string>> = {};
+        const materialDemandCounts: Record<string, number> = {};
 
         // Pre-populate totals using unique demands to avoid double counting from multi-electrician demands
         demands.forEach((d: any) => {
+          const dCount = Number(d.repetition) || Number(d.count) || 1;
           // Used materials
           d.usedMaterials?.forEach((um: any) => {
             const key = um.material.id;
@@ -434,10 +439,10 @@ export class ReportController {
             }
             totals.used[key].quantity += um.quantity;
 
-            if (!materialDemandIds[key]) {
-              materialDemandIds[key] = new Set<string>();
+            if (!materialDemandCounts[key]) {
+              materialDemandCounts[key] = 0;
             }
-            materialDemandIds[key].add(d.id);
+            materialDemandCounts[key] += dCount;
           });
 
           // Defective/damaged materials
@@ -464,7 +469,7 @@ export class ReportController {
 
         // Set demandsCount for used items
         Object.keys(totals.used).forEach((key) => {
-          totals.used[key].demandsCount = materialDemandIds[key] ? materialDemandIds[key].size : 0;
+          totals.used[key].demandsCount = materialDemandCounts[key] || 0;
         });
 
         doc.fillColor('#000000');
@@ -480,33 +485,48 @@ export class ReportController {
         for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
           doc.rect(50, 40, 512, 30).fill('#f8fafc');
           doc.font(fontBold).fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
-          doc.moveDown(1.5);
+          doc.moveDown(1);
           doc.fillColor('#000000');
 
           for (const d of eDemands) {
-            if (doc.y > 600) doc.addPage();
+            if (doc.y > 660) doc.addPage();
             const startY = doc.y;
-            doc.rect(50, startY, 512, 22).fill('#f1f5f9');
+            
+            const isMultiple = d.isMultiple || d.description?.toLowerCase().includes('demanda múltipla') || d.description?.toLowerCase().includes('demanda multipla') || Number(d.repetition) > 1 || Number(d.count) > 1;
+            
+            if (isMultiple) {
+              doc.rect(50, startY, 512, 18).fill('#e0f2fe');
+              doc.rect(50, startY, 4, 18).fill('#0284c7');
+            } else {
+              doc.rect(50, startY, 512, 18).fill('#f1f5f9');
+            }
             
             const displayDate = d.date instanceof Date ? format(d.date, 'dd/MM/yyyy') : format(new Date(d.date), 'dd/MM/yyyy');
-            doc.fillColor('#0f172a').font(fontBold).fontSize(11).text(`${displayDate} - ${d.location}`, 60, startY + 6);
-            doc.moveDown(0.8);
+            const titleColor = isMultiple ? '#0284c7' : '#0f172a';
+            const titleSuffix = isMultiple ? `   [DEMANDA MÚLTIPLA: ${d.repetition || d.count || 1}x]` : '';
+            doc.fillColor(titleColor).font(fontBold).fontSize(10).text(`${displayDate} - ${d.location}${titleSuffix}`, 60, startY + 5);
+            doc.y = startY + 22;
             
-            doc.fillColor('#334155').font(fontItalic).fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
-            doc.moveDown(0.5);
+            if (isMultiple) {
+              doc.fillColor('#1d4ed8').font(fontBold).fontSize(9.5).text(`Descrição: ${d.description}`, { lineGap: 1.5 });
+            } else {
+              doc.fillColor('#334155').font(fontItalic).fontSize(9.5).text(`Descrição: ${d.description}`, { lineGap: 1.5 });
+            }
+            doc.moveDown(0.2);
 
-            doc.fillColor('#64748b').font(fontBold).fontSize(8).text('EQUIPE:', 60);
-            doc.fillColor('#0f172a').font(fontRegular).fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 9);
-            doc.moveDown(0.4);
+            const eqY = doc.y;
+            doc.fillColor('#64748b').font(fontBold).fontSize(8).text('EQUIPE:', 60, eqY);
+            doc.fillColor('#0f172a').font(fontRegular).fontSize(8.5).text(d.electricians.map((e: any) => e.name).join(', '), 105, eqY);
+            doc.moveDown(0.2);
 
             const tableY = doc.y;
-            doc.rect(50, tableY, 512, 15).fill('#334155');
+            doc.rect(50, tableY, 512, 14).fill('#334155');
             doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
-            doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 4);
-            doc.text('PLANEJ.', 380, tableY + 4);
-            doc.text('UTILIZ.', 430, tableY + 4);
-            doc.text('SOBRA', 480, tableY + 4);
-            doc.moveDown(0.8);
+            doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 3.5);
+            doc.text('PLANEJ.', 380, tableY + 3.5);
+            doc.text('UTILIZ.', 430, tableY + 3.5);
+            doc.text('SOBRA', 480, tableY + 3.5);
+            doc.y = tableY + 16;
 
             const allMaterialIds = new Set([
               ...d.plannedMaterials.map((m: any) => m.materialId),
@@ -516,16 +536,16 @@ export class ReportController {
 
             doc.fillColor('#000000').font(fontRegular).fontSize(8);
             allMaterialIds.forEach((mId: any) => {
-              if (doc.y > 750) {
+              if (doc.y > 710) {
                 doc.addPage();
                 const newTableY = doc.y;
-                doc.rect(50, newTableY, 512, 15).fill('#334155');
+                doc.rect(50, newTableY, 512, 14).fill('#334155');
                 doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
-                doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 4);
-                doc.text('PLANEJ.', 380, newTableY + 4);
-                doc.text('UTILIZ.', 430, newTableY + 4);
-                doc.text('SOBRA', 480, newTableY + 4);
-                doc.moveDown(0.8);
+                doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 3.5);
+                doc.text('PLANEJ.', 380, newTableY + 3.5);
+                doc.text('UTILIZ.', 430, newTableY + 3.5);
+                doc.text('SOBRA', 480, newTableY + 3.5);
+                doc.y = newTableY + 16;
                 doc.fillColor('#000000').font(fontRegular).fontSize(8);
               }
 
@@ -535,8 +555,6 @@ export class ReportController {
               const material = pm?.material || um?.material || rm?.material;
 
               const lineY = doc.y;
-              doc.text(material?.name || 'Material Desconhecido', 60, lineY);
-              
               const isExclusiveSplitClone = d.plannedMaterials && d.plannedMaterials.length === 0;
               const plannedText = isExclusiveSplitClone ? '' : `${pm?.quantity || 0} ${material?.unit || ''}`;
               const usedText = `${um?.quantity || 0} ${material?.unit || ''}`;
@@ -545,43 +563,43 @@ export class ReportController {
               doc.text(plannedText, 380, lineY);
               doc.text(usedText, 430, lineY);
               doc.text(surplusText, 480, lineY);
+              doc.text(material?.name || 'Material Desconhecido', 60, lineY, { width: 310 });
               
-              doc.moveDown(0.2);
+              doc.moveDown(0.15);
             });
 
             const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DEFECTIVE');
             if (damaged.length > 0) {
-              doc.moveDown(0.4);
+              doc.moveDown(0.2);
               doc.fillColor('#b91c1c').font(fontBold).fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
               damaged.forEach((m: any) => {
                 doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
-
               });
             }
 
             const recovered = d.returnedMaterials.filter((m: any) => m.type === 'RECOVERED');
             if (recovered.length > 0) {
-              doc.moveDown(0.4);
+              doc.moveDown(0.2);
               doc.fillColor('#15803d').font(fontBold).fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
               recovered.forEach((m: any) => {
                 const name = m.material?.name || m.materialName;
                 doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
-
               });
             }
 
             const resources = [];
             if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
             if (resources.length > 0) {
-              doc.moveDown(0.4);
+              doc.moveDown(0.2);
               doc.fillColor('#0284c7').font(fontBold).fontSize(8).text('RECURSOS UTILIZADOS:', 60);
               resources.forEach(r => doc.fillColor('#0f172a').font(fontRegular).fontSize(8).text(`• ${r}`, 70));
             }
 
-            doc.moveDown(1.5);
-            doc.rect(50, doc.y, 512, 0.5).fill('#e2e8f0');
-            doc.moveDown(1);
+            doc.moveDown(0.5);
+            doc.rect(50, doc.y, 512, 0.5).fill('#cbd5e1');
+            doc.moveDown(0.5);
           }
+          doc.moveDown(1);
           doc.addPage();
         }
 
@@ -828,15 +846,18 @@ export class ReportController {
           recoveredTotals[key].quantity += m.quantity;
         });
 
+        const isMultiple = d.isMultiple || d.description?.toLowerCase().includes('demanda múltipla') || d.description?.toLowerCase().includes('demanda multipla') || Number(d.repetition) > 1 || Number(d.count) > 1;
         const displayDate = d.date instanceof Date ? format(d.date, 'dd/MM/yyyy') : format(new Date(d.date), 'dd/MM/yyyy');
+        const titleSuffix = isMultiple ? `   [DEMANDA MÚLTIPLA: ${d.repetition || d.count || 1}x]` : '';
         children.push(new Paragraph({
           children: [
-            new TextRun({ text: `DATA: ${displayDate} - LOCAL: ${d.location}`, bold: true, size: 22 })
+            new TextRun({ text: `DATA: ${displayDate} - LOCAL: ${d.location}${titleSuffix}`, bold: true, size: 22, color: isMultiple ? '0284C7' : '000000' })
           ],
-          spacing: { before: 200 }
+          spacing: { before: 150 }
         }));
         children.push(new Paragraph({
-          children: [new TextRun({ text: `DESCRIÇÃO: ${d.description}`, italics: true, size: 20 })]
+          children: [new TextRun({ text: `DESCRIÇÃO: ${d.description}`, italics: !isMultiple, bold: isMultiple, size: 20, color: isMultiple ? '1D4ED8' : '334155' })],
+          spacing: { before: 40, after: 40 }
         }));
         children.push(new Paragraph({
           children: [new TextRun({ text: `EQUIPE: ${d.electricians.map((e: any) => e.name).join(', ')}`, size: 20 })]

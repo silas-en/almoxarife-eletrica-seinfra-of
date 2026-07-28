@@ -293,7 +293,7 @@ export default function Reports() {
                 <span className="text-sm font-bold text-gray-500 uppercase">Demandas</span>
               </div>
               <p className="text-3xl font-extrabold text-gray-900">
-                {viewingPeriod ? (report?.demandsCount ?? 0) : (periods?.[0]?.demandCount || 0)}
+                {viewingPeriod ? (report?.demandsCount ?? 0) : (periods?.find((p: any) => p.isCurrent)?.demandCount || 0)}
               </p>
               <p className="text-xs text-gray-400 mt-1">
                 {viewingPeriod ? `Concluídas no período ${getRangeTitle().toLowerCase()}` : getAccumulatedLabel()}
@@ -355,40 +355,46 @@ export default function Reports() {
                     <History className="h-5 w-5 text-gray-400" />
                     Registros Disponíveis
                  </h3>
-                 <p className="text-xs font-bold text-gray-400 uppercase">Listando todos desde a primeira demanda</p>
+                 <p className="text-xs font-bold text-gray-400 uppercase">Listando apenas períodos com demandas</p>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {periods?.map((p: any) => (
-                  <div 
-                    key={`${p.start}-${p.end}`}
-                    onClick={() => setViewingPeriod(p.referenceDate)}
-                    className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
-                  >
-                    {p.isSaved && (
-                       <div className="absolute top-0 right-0 p-2">
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
-                       </div>
-                    )}
-                    <div className="flex items-center gap-2 mb-3">
-                       <Calendar className="h-4 w-4 text-gray-400" />
-                       <span className="text-[10px] font-bold text-gray-400 uppercase">{getRangeTitle()}</span>
-                    </div>
-                    <p className="text-lg font-extrabold text-gray-900 group-hover:text-blue-600 transition-colors">
-                      {p.start} — {p.end}
-                    </p>
-                    <div className="mt-4 flex items-center justify-between">
-                       <div className="flex items-center gap-1.5">
-                          <TrendingUp className="h-3 w-3 text-blue-500" />
-                          <span className="text-xs font-bold text-gray-600">{p.demandCount} Demandas</span>
-                       </div>
-                       <div className="flex items-center gap-1 text-blue-600 font-bold text-xs">
-                          Analisar
-                          <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform" />
-                       </div>
-                    </div>
+                {(!periods || periods.length === 0) ? (
+                  <div className="col-span-full py-12 text-center bg-white rounded-2xl border border-gray-100 shadow-sm">
+                    <p className="text-gray-400 font-medium text-sm">Nenhum período com demandas concluídas registrado.</p>
                   </div>
-                ))}
+                ) : (
+                  periods.map((p: any) => (
+                    <div 
+                      key={`${p.start}-${p.end}`}
+                      onClick={() => setViewingPeriod(p.referenceDate)}
+                      className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+                    >
+                      {p.isSaved && (
+                         <div className="absolute top-0 right-0 p-2">
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                         </div>
+                      )}
+                      <div className="flex items-center gap-2 mb-3">
+                         <Calendar className="h-4 w-4 text-gray-400" />
+                         <span className="text-[10px] font-bold text-gray-400 uppercase">{getRangeTitle()}</span>
+                      </div>
+                      <p className="text-lg font-extrabold text-gray-900 group-hover:text-blue-600 transition-colors">
+                        {p.start} — {p.end}
+                      </p>
+                      <div className="mt-4 flex items-center justify-between">
+                         <div className="flex items-center gap-1.5">
+                            <TrendingUp className="h-3 w-3 text-blue-500" />
+                            <span className="text-xs font-bold text-gray-600">{p.demandCount} Demandas</span>
+                         </div>
+                         <div className="flex items-center gap-1 text-blue-600 font-bold text-xs">
+                            Analisar
+                            <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform" />
+                         </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           ) : (
@@ -415,7 +421,10 @@ export default function Reports() {
                       </div>
                       <h4 className="font-bold text-gray-900">{name}</h4>
                       <span className="ml-auto bg-blue-100 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">
-                        {demands.length} {demands.length === 1 ? 'Demanda' : 'Demandas'}
+                        {(() => {
+                          const totalCount = demands.reduce((sum: number, d: any) => sum + (Number(d.repetition) || Number(d.count) || 1), 0);
+                          return `${totalCount} ${totalCount === 1 ? 'Demanda' : 'Demandas'}`;
+                        })()}
                       </span>
                     </div>
                     <div className="p-6">
@@ -427,6 +436,9 @@ export default function Reports() {
                               <span className="text-[10px] bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded uppercase">FEITO</span>
                             </div>
                             <p className="text-sm font-bold text-gray-900 line-clamp-2 min-h-[40px] group-hover:text-blue-700 transition-colors">{d.location}</p>
+                            {d.description && (
+                              <p className="text-xs text-gray-600 italic line-clamp-2 bg-white/60 p-2 rounded-lg border border-gray-100">{d.description}</p>
+                            )}
                             
                             <div className="pt-2 border-t border-gray-100">
                               <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Materiais Impactados</p>
