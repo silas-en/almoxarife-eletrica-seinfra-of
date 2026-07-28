@@ -1153,6 +1153,34 @@ export class DemandController {
     }
   }
 
+  static async batchApprove(req: AuthRequest, res: Response) {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'Nenhum ID fornecido para aprovação' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        for (const id of ids) {
+          await tx.demand.update({
+            where: { id },
+            data: { status: 'CONCLUDED' }
+          });
+          await processDemandPostApprovalOrConclusion(id, tx);
+        }
+      }, { maxWait: 30000, timeout: 60000 });
+
+      for (const id of ids) {
+        await AuditService.log('APPROVE', 'DEMAND', req.user!.id, id);
+      }
+
+      res.status(200).json({ message: 'Demandas aprovadas com sucesso', count: ids.length });
+    } catch (error) {
+      console.error('[DemandController.batchApprove] Error:', error);
+      res.status(500).json({ error: 'Erro ao aprovar demandas em lote' });
+    }
+  }
+
   static async getPendingReturns(req: AuthRequest, res: Response) {
     try {
       const where: any = { type: 'NOT_USED', isReturned: false };

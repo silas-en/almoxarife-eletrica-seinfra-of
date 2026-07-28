@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2, RefreshCw, CheckSquare } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2, RefreshCw, CheckSquare, CheckCircle2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -12,6 +12,7 @@ import { parseUTCDate, formatLocalDate } from '../../utils/date.ts';
 
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 import ShareOptionsModal from '../../components/ShareOptionsModal.tsx';
+import BatchCompletionModal from '../../components/BatchCompletionModal.tsx';
 import { useOffline } from '../../context/OfflineContext.tsx';
 import { IndexedDbService } from '../../../infra/storage/indexedDbService.ts';
 
@@ -400,6 +401,7 @@ export default function Demands() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedDemandIds, setSelectedDemandIds] = useState<string[]>([]);
+  const [isBatchCompletionOpen, setIsBatchCompletionOpen] = useState(false);
 
   const batchDeleteDemandsMutation = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -426,6 +428,36 @@ export default function Demands() {
       showFeedback('error', 'Erro ao excluir demandas selecionadas.');
     }
   });
+
+  const batchApproveDemandsMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const onlineIds = ids.filter(id => !id.startsWith('offline-'));
+      if (onlineIds.length > 0) {
+        await api.post('/demands/batch-approve', { ids: onlineIds });
+      }
+      return ids.length;
+    },
+    onSuccess: (count, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      setSelectedDemandIds([]);
+      setIsSelectMode(false);
+      const total = count || variables.length;
+      showFeedback('success', `${total} ${total === 1 ? 'demanda foi aprovada' : 'demandas foram aprovadas'} com sucesso.`);
+    },
+    onError: () => {
+      showFeedback('error', 'Erro ao aprovar demandas selecionadas.');
+    }
+  });
+
+  const handleBatchApprove = () => {
+    if (selectedDemandIds.length === 0) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Aprovar Demandas em Lote',
+      message: `Tem certeza que deseja aprovar as ${selectedDemandIds.length} demanda(s) selecionada(s)? Elas serão marcadas como concluídas e movidas para o histórico.`,
+      onConfirm: () => batchApproveDemandsMutation.mutate(selectedDemandIds)
+    });
+  };
 
   const deleteDemandMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -662,6 +694,31 @@ export default function Demands() {
                         />
                         <span>Selecionar tudo</span>
                       </label>
+                      {activeTab === 'PENDING_APPROVAL' ? (
+                        <button
+                          onClick={handleBatchApprove}
+                          disabled={selectedDemandIds.length === 0 || batchApproveDemandsMutation.isPending}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-2.5 py-0.5 rounded text-xs font-bold transition-colors flex items-center gap-1 shadow-sm cursor-pointer disabled:cursor-not-allowed"
+                          title="Aprovar em lote as demandas selecionadas"
+                        >
+                          {batchApproveDemandsMutation.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          )}
+                          Aprovar Selecionadas ({selectedDemandIds.length})
+                        </button>
+                      ) : activeTab === 'PENDING' ? (
+                        <button
+                          onClick={() => setIsBatchCompletionOpen(true)}
+                          disabled={selectedDemandIds.length === 0}
+                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white px-2.5 py-0.5 rounded text-xs font-bold transition-colors flex items-center gap-1 shadow-sm cursor-pointer disabled:cursor-not-allowed"
+                          title="Dar baixa em lote nas demandas selecionadas"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Dar Baixa em Lote ({selectedDemandIds.length})
+                        </button>
+                      ) : null}
                       <button
                         onClick={handleBatchDelete}
                         disabled={selectedDemandIds.length === 0 || batchDeleteDemandsMutation.isPending}
@@ -1216,6 +1273,20 @@ export default function Demands() {
         title={activeShareData?.title || ''}
         text={activeShareData?.text || ''}
         photos={activeShareData?.photos || []}
+      />
+
+      <BatchCompletionModal
+        isOpen={isBatchCompletionOpen}
+        onClose={() => setIsBatchCompletionOpen(false)}
+        selectedDemandIds={selectedDemandIds}
+        allDemands={combinedDemands}
+        onSuccess={() => {
+          setIsBatchCompletionOpen(false);
+          setIsSelectMode(false);
+          setSelectedDemandIds([]);
+          setFeedback({ type: 'success', message: 'Baixa em lote processada com sucesso!' });
+          setTimeout(() => setFeedback(null), 3000);
+        }}
       />
     </Layout>
   );

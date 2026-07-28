@@ -1,13 +1,15 @@
 import { useAuth } from '../context/AuthContext.tsx';
 import Layout from '../components/Layout.tsx';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect } from 'react';
 import api from '../services/api.ts';
-import { ClipboardList, CheckCircle, Clock, AlertTriangle, Star, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ClipboardList, CheckCircle, Clock, AlertTriangle, Star, ChevronLeft, ChevronRight, CheckSquare, CheckCircle2, Layers, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ptBR } from 'date-fns/locale';
 import { parseUTCDate, formatLocalDate } from '../utils/date.ts';
 import { IndexedDbService } from '../../infra/storage/indexedDbService.ts';
+import BatchCompletionModal from '../components/BatchCompletionModal.tsx';
+import ConfirmDialog from '../components/ConfirmDialog.tsx';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -29,7 +31,47 @@ export default function Dashboard() {
     }
   });
 
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedDemandIds, setSelectedDemandIds] = useState<string[]>([]);
+  const [isBatchCompletionOpen, setIsBatchCompletionOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+
+  const batchApproveMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const onlineIds = ids.filter(id => !id.startsWith('offline-'));
+      if (onlineIds.length > 0) {
+        await api.post('/demands/batch-approve', { ids: onlineIds });
+      }
+      return ids.length;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      setSelectedDemandIds([]);
+      setIsSelectMode(false);
+    }
+  });
+
+  const handleBatchApprove = () => {
+    if (selectedDemandIds.length === 0) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Aprovar Demandas em Lote',
+      message: `Tem certeza que deseja aprovar as ${selectedDemandIds.length} demanda(s) selecionada(s)? Elas serão marcadas como concluídas e movidas para o histórico.`,
+      onConfirm: () => batchApproveMutation.mutate(selectedDemandIds)
+    });
+  };
 
   const currentYear = new Date().getFullYear();
   const yearDemands = demands?.filter((d: any) => {
@@ -298,9 +340,74 @@ export default function Dashboard() {
               Executadas
             </button>
           </div>
-          <Link to={user?.role === 'ADMIN' ? '/admin/demands' : '/'} className="text-blue-600 text-sm font-medium hover:underline">
-            Ver tudo
-          </Link>
+          <div className="flex items-center gap-3">
+            {!isSelectMode ? (
+              <button
+                onClick={() => {
+                  setIsSelectMode(true);
+                  setSelectedDemandIds([]);
+                }}
+                className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-1.5 border border-blue-200"
+                title="Selecionar múltiplas demandas para dar baixa em lote"
+              >
+                <CheckSquare className="h-4 w-4" /> Selecionar em Lote
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-700 select-none bg-gray-100 px-2 py-1 rounded-lg border border-gray-200 hover:bg-gray-200 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={filteredDemands.length > 0 && filteredDemands.every((d: any) => selectedDemandIds.includes(String(d.id)))}
+                    onChange={() => {
+                      const allSelected = filteredDemands.length > 0 && filteredDemands.every((d: any) => selectedDemandIds.includes(String(d.id)));
+                      if (allSelected) {
+                        setSelectedDemandIds([]);
+                      } else {
+                        setSelectedDemandIds(filteredDemands.map((d: any) => String(d.id)));
+                      }
+                    }}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                  <span>Todos</span>
+                </label>
+                {activeTab === 'PENDING_APPROVAL' ? (
+                  <button
+                    onClick={handleBatchApprove}
+                    disabled={selectedDemandIds.length === 0 || batchApproveMutation.isPending}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-3 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {batchApproveMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    Aprovar Selecionadas ({selectedDemandIds.length})
+                  </button>
+                ) : activeTab === 'PENDING' ? (
+                  <button
+                    onClick={() => setIsBatchCompletionOpen(true)}
+                    disabled={selectedDemandIds.length === 0}
+                    className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white px-3 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Dar Baixa em Lote ({selectedDemandIds.length})
+                  </button>
+                ) : null}
+                <button
+                  onClick={() => {
+                    setIsSelectMode(false);
+                    setSelectedDemandIds([]);
+                  }}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+            <Link to={user?.role === 'ADMIN' ? '/admin/demands' : '/'} className="text-blue-600 text-sm font-medium hover:underline">
+              Ver tudo
+            </Link>
+          </div>
         </div>
         
         {isLoading ? (
@@ -310,52 +417,127 @@ export default function Dashboard() {
             {filteredDemands?.length === 0 ? (
               <div className="p-8 text-center text-gray-500">Nenhuma demanda encontrada nesta categoria.</div>
             ) : (
-              filteredDemands?.map((demand: any) => (
-                <Link 
-                  key={demand.id} 
-                  to={`/demands/${demand.id}`}
-                  className="block p-6 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <h3 className="font-bold text-gray-900">{demand.location}</h3>
-                        {demand.isPriority && (
-                          <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1 border border-amber-200 shrink-0">
-                            <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
-                            Prioritária ({demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy') : ''})
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-gray-600 text-sm line-clamp-1">{demand.description}</p>
-                      <div className="flex items-center mt-2 text-xs text-gray-500 space-x-4">
-                        <span className="flex items-center">
-                          <ClipboardList className="h-3 w-3 mr-1" />
-                          {formatLocalDate(demand.date, "dd/MM/yyyy", { locale: ptBR })}
-                        </span>
-                        {user?.role === 'ADMIN' && (
-                          <div className="flex gap-1">
-                            {demand.electricians && demand.electricians.length > 0 ? (
-                              demand.electricians.map((e: any) => (
-                                <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded uppercase text-[10px]">{e.name}</span>
-                              ))
-                            ) : (
-                               <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded uppercase text-[10px] font-bold border border-red-100 animate-pulse">Não atribuída!</span>
+              filteredDemands?.map((demand: any) => {
+                const demandIdStr = String(demand.id);
+                const isSelected = selectedDemandIds.includes(demandIdStr);
+
+                if (isSelectMode) {
+                  return (
+                    <div
+                      key={demand.id}
+                      onClick={() => {
+                        setSelectedDemandIds(prev =>
+                          prev.includes(demandIdStr)
+                            ? prev.filter(id => id !== demandIdStr)
+                            : [...prev, demandIdStr]
+                        );
+                      }}
+                      className={`p-6 hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-between gap-4 border-l-4 ${
+                        isSelected ? 'bg-blue-50/60 border-l-blue-600' : 'border-l-transparent'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <h3 className="font-bold text-gray-900">{demand.location}</h3>
+                            {demand.isPriority && (
+                              <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1 border border-amber-200 shrink-0">
+                                <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                                Prioritária ({demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy') : ''})
+                              </span>
                             )}
                           </div>
-                        )}
+                          <p className="text-gray-600 text-sm line-clamp-1">{demand.description}</p>
+                          <div className="flex items-center mt-2 text-xs text-gray-500 space-x-4">
+                            <span className="flex items-center">
+                              <ClipboardList className="h-3 w-3 mr-1" />
+                              {formatLocalDate(demand.date, "dd/MM/yyyy", { locale: ptBR })}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center shrink-0">
+                        <StatusBadge status={demand.status} isOfflineCompleted={demand.isOfflineCompleted} />
                       </div>
                     </div>
-                    <div className="flex items-center">
-                      <StatusBadge status={demand.status} isOfflineCompleted={demand.isOfflineCompleted} />
+                  );
+                }
+
+                return (
+                  <Link 
+                    key={demand.id} 
+                    to={`/demands/${demand.id}`}
+                    className="block p-6 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <h3 className="font-bold text-gray-900">{demand.location}</h3>
+                          {demand.isPriority && (
+                            <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1 border border-amber-200 shrink-0">
+                              <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                              Prioritária ({demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy') : ''})
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-600 text-sm line-clamp-1">{demand.description}</p>
+                        <div className="flex items-center mt-2 text-xs text-gray-500 space-x-4">
+                          <span className="flex items-center">
+                            <ClipboardList className="h-3 w-3 mr-1" />
+                            {formatLocalDate(demand.date, "dd/MM/yyyy", { locale: ptBR })}
+                          </span>
+                          {user?.role === 'ADMIN' && (
+                            <div className="flex gap-1">
+                              {demand.electricians && demand.electricians.length > 0 ? (
+                                demand.electricians.map((e: any) => (
+                                  <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded uppercase text-[10px]">{e.name}</span>
+                                ))
+                              ) : (
+                                 <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded uppercase text-[10px] font-bold border border-red-100 animate-pulse">Não atribuída!</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center">
+                        <StatusBadge status={demand.status} isOfflineCompleted={demand.isOfflineCompleted} />
+                      </div>
                     </div>
-                  </div>
-                </Link>
-              ))
+                  </Link>
+                );
+              })
             )}
           </div>
         )}
       </div>
+
+      <BatchCompletionModal
+        isOpen={isBatchCompletionOpen}
+        onClose={() => setIsBatchCompletionOpen(false)}
+        selectedDemandIds={selectedDemandIds}
+        allDemands={yearDemands || []}
+        onSuccess={() => {
+          setIsBatchCompletionOpen(false);
+          setIsSelectMode(false);
+          setSelectedDemandIds([]);
+        }}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText="Aprovar"
+        variant="info"
+      />
     </Layout>
   );
 }
