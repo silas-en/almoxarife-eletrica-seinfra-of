@@ -654,17 +654,13 @@ export default function DemandDetails() {
       const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
 
       let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
-      message += `📍 *Local:* ${demand.location || 'Não informado'}\n\n`;
+      message += `📍 *Local:* ${demand.location || 'Não informado'}\n`;
+      if (demand.description) {
+        message += `📝 *Descrição:* ${demand.description}\n`;
+      }
 
       if (photosList.length > 0) {
-        message += `📸 *Fotos do Serviço Executado:*\n`;
-        photosList.forEach((url: string, index: number) => {
-          const trimmedUrl = url.trim();
-          const absoluteUrl = trimmedUrl.startsWith('http') 
-            ? trimmedUrl 
-            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-          message += `${index + 1}️⃣ ${absoluteUrl}\n`;
-        });
+        message += `📸 *Fotos:* ${photosList.length} foto(s) em anexo\n`;
       } else {
         message += `⚠️ Nenhuma foto registrada.\n`;
       }

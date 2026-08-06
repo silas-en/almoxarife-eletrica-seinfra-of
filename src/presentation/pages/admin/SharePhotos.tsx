@@ -8,7 +8,9 @@ import { IndexedDbService } from '../../../infra/storage/indexedDbService.ts';
 import ShareOptionsModal from '../../components/ShareOptionsModal.tsx';
 
 export default function SharePhotos() {
-  const [batchDate, setBatchDate] = useState(formatLocalDate(new Date(), 'yyyy-MM-dd'));
+  const todayStr = formatLocalDate(new Date(), 'yyyy-MM-dd');
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
   const [isSharingBatch, setIsSharingBatch] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [activeShareData, setActiveShareData] = useState<{ title: string; text: string; photos: string[] } | null>(null);
@@ -16,6 +18,27 @@ export default function SharePhotos() {
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
     setTimeout(() => setFeedback(null), 4000);
+  };
+
+  const setFilterToday = () => {
+    const now = formatLocalDate(new Date(), 'yyyy-MM-dd');
+    setStartDate(now);
+    setEndDate(now);
+  };
+
+  const setFilterLast7Days = () => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 6);
+    setStartDate(formatLocalDate(start, 'yyyy-MM-dd'));
+    setEndDate(formatLocalDate(end, 'yyyy-MM-dd'));
+  };
+
+  const setFilterThisMonth = () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    setStartDate(formatLocalDate(start, 'yyyy-MM-dd'));
+    setEndDate(formatLocalDate(now, 'yyyy-MM-dd'));
   };
 
   const { data: demands, isLoading } = useQuery({
@@ -36,14 +59,19 @@ export default function SharePhotos() {
     const isExecuted = d.status === 'CONCLUDED' || d.status === 'PENDING_APPROVAL';
     const hasPhotos = !!d.photoUrl;
     
-    const demandDateObj = parseUTCDate(d.date);
-    const filterDateObj = parseUTCDate(batchDate);
-    const matchesDate = 
-      demandDateObj.getFullYear() === filterDateObj.getFullYear() &&
-      demandDateObj.getMonth() === filterDateObj.getMonth() &&
-      demandDateObj.getDate() === filterDateObj.getDate();
+    if (!isExecuted || !hasPhotos || !d.id || d.id.startsWith('offline-')) {
+      return false;
+    }
 
-    return isExecuted && hasPhotos && d.id && !d.id.startsWith('offline-') && matchesDate;
+    const demandDateObj = parseUTCDate(d.date);
+    const startObj = parseUTCDate(startDate);
+    startObj.setHours(0, 0, 0, 0);
+
+    const endObj = parseUTCDate(endDate);
+    endObj.setHours(23, 59, 59, 999);
+
+    const dTime = demandDateObj.getTime();
+    return dTime >= startObj.getTime() && dTime <= endObj.getTime();
   });
 
   // Sort by location name (nome) alphabetically
@@ -64,35 +92,39 @@ export default function SharePhotos() {
     setIsSendingAllAtOnce(true);
 
     try {
-      let message = `*DEMANDAS DO DIA ${formatLocalDate(batchDate, 'dd/MM/yyyy')}* 📋\n\n`;
-      message += `📍 *Localidades Executadas:*\n`;
+      const periodLabel = startDate === endDate
+        ? `DO DIA ${formatLocalDate(startDate, 'dd/MM/yyyy')}`
+        : `DO PERÍODO ${formatLocalDate(startDate, 'dd/MM/yyyy')} ATÉ ${formatLocalDate(endDate, 'dd/MM/yyyy')}`;
+
+      const periodTitle = startDate === endDate
+        ? `FOTOS E LOCAIS - ${formatLocalDate(startDate, 'dd/MM/yyyy')}`
+        : `FOTOS E LOCAIS - ${formatLocalDate(startDate, 'dd/MM/yyyy')} a ${formatLocalDate(endDate, 'dd/MM/yyyy')}`;
+
+      let message = `*DEMANDAS ${periodLabel}* 📋\n\n`;
+      message += `📍 *Localidades Executadas (${batchDemands.length}):*\n`;
       batchDemands.forEach((d: any, idx: number) => {
         message += `${idx + 1}. *${d.location || 'Não informado'}*\n`;
       });
-      message += `\n📸 *Fotos das Demandas:*\n`;
       
       const photoUrls: string[] = [];
       batchDemands.forEach((d: any) => {
         if (d.photoUrl) {
           const photos = d.photoUrl.split(',');
-          photos.forEach((url: string, index: number) => {
+          photos.forEach((url: string) => {
             const trimmedUrl = url.trim();
-            if (trimmedUrl) {
-              const absoluteUrl = trimmedUrl.startsWith('http') 
-                ? trimmedUrl 
-                : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-              
-              if (!photoUrls.includes(trimmedUrl)) {
-                photoUrls.push(trimmedUrl);
-              }
-              message += `- Local "*${d.location}*" (Foto ${index + 1}): ${absoluteUrl}\n`;
+            if (trimmedUrl && !photoUrls.includes(trimmedUrl)) {
+              photoUrls.push(trimmedUrl);
             }
           });
         }
       });
 
+      if (photoUrls.length > 0) {
+        message += `\n📸 *Fotos em Anexo:* ${photoUrls.length} foto(s)`;
+      }
+
       setActiveShareData({
-        title: `FOTOS E LOCAIS - ${formatLocalDate(batchDate, 'dd/MM/yyyy')}`,
+        title: periodTitle,
         text: message,
         photos: photoUrls
       });
@@ -107,17 +139,13 @@ export default function SharePhotos() {
   const shareSpecificDemand = async (d: any, onCompleted?: () => void) => {
     try {
       const photos = d.photoUrl ? d.photoUrl.split(',') : [];
-      let message = `📍 *Local:* ${d.location || 'Não informado'}\n\n`;
+      let message = `📍 *Local:* ${d.location || 'Não informado'}\n`;
+      if (d.description) {
+        message += `📝 *Descrição:* ${d.description}\n`;
+      }
       
       if (photos.length > 0) {
-        message += `📸 *Fotos do Serviço Executado:*\n`;
-        photos.forEach((url: string, index: number) => {
-          const trimmedUrl = url.trim();
-          const absoluteUrl = trimmedUrl.startsWith('http') 
-            ? trimmedUrl 
-            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-          message += `${index + 1}️⃣ ${absoluteUrl}\n`;
-        });
+        message += `📸 *Fotos:* ${photos.length} foto(s) registrada(s)\n`;
       } else {
         message += `⚠️ Nenhuma foto registrada.\n`;
       }
@@ -161,7 +189,7 @@ export default function SharePhotos() {
           Compartilhamento de Fotos em Lote
         </h1>
         <p className="text-sm text-gray-600">
-          Como administrador, escolha um dia para buscar todas as fotos das demandas aprovadas/concluídas e compartilhá-las de forma direta.
+          Como administrador, escolha um período (data inicial e final) para buscar todas as fotos das demandas aprovadas/concluídas e compartilhá-las de forma direta.
         </p>
       </div>
 
@@ -176,17 +204,57 @@ export default function SharePhotos() {
       )}
 
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-gray-700">Selecione a Data das Demandas:</span>
-            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
-              <Calendar className="h-4 w-4 text-emerald-600" />
-              <input
-                type="date"
-                className="p-1 border border-emerald-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-emerald-900 font-bold"
-                value={batchDate}
-                onChange={(e) => setBatchDate(e.target.value)}
-              />
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-gray-100 pb-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <span className="text-xs font-bold text-gray-700 uppercase tracking-wide shrink-0">Filtrar Período:</span>
+            
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-xl">
+                <Calendar className="h-3.5 w-3.5 text-emerald-600" />
+                <span className="text-xs font-bold text-emerald-800">De:</span>
+                <input
+                  type="date"
+                  className="p-1 border border-emerald-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-emerald-900 font-bold"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-xl">
+                <Calendar className="h-3.5 w-3.5 text-emerald-600" />
+                <span className="text-xs font-bold text-emerald-800">Até:</span>
+                <input
+                  type="date"
+                  className="p-1 border border-emerald-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-emerald-900 font-bold"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={setFilterToday}
+                  className="text-[10px] bg-gray-100 hover:bg-emerald-100 hover:text-emerald-800 font-bold text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Hoje
+                </button>
+                <button
+                  type="button"
+                  onClick={setFilterLast7Days}
+                  className="text-[10px] bg-gray-100 hover:bg-emerald-100 hover:text-emerald-800 font-bold text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  7 Dias
+                </button>
+                <button
+                  type="button"
+                  onClick={setFilterThisMonth}
+                  className="text-[10px] bg-gray-100 hover:bg-emerald-100 hover:text-emerald-800 font-bold text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Este Mês
+                </button>
+              </div>
             </div>
           </div>
 
@@ -228,7 +296,9 @@ export default function SharePhotos() {
           </div>
         ) : batchDemands.length === 0 ? (
           <div className="text-center py-12 text-sm font-medium text-gray-500 border border-dashed border-gray-100 rounded-xl">
-            Nenhuma demanda executada/concluída com fotos para {formatLocalDate(batchDate, 'dd/MM/yyyy')}.
+            {startDate === endDate 
+              ? `Nenhuma demanda executada/concluída com fotos para ${formatLocalDate(startDate, 'dd/MM/yyyy')}.`
+              : `Nenhuma demanda executada/concluída com fotos no período de ${formatLocalDate(startDate, 'dd/MM/yyyy')} a ${formatLocalDate(endDate, 'dd/MM/yyyy')}.`}
           </div>
         ) : (
           <div className="space-y-4">
